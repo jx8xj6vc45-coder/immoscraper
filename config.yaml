@@ -1,0 +1,52 @@
+search_criteria:
+  max_price: 2200000
+  min_rooms: 4.5
+  min_area_sqm: 120
+  min_parking: 2
+  min_outdoor_sqm: 10
+  max_travel_time_minutes: 35
+  exclude_baurecht: true
+
+  priority_regions:
+    tier1:
+      - Greifensee
+      - Uster
+      - Volketswil
+      - Schwerzenbach
+    tier2:
+      - Wädenswil
+      - Richterswil
+      - Horgen
+
+platforms:
+  tier1:
+    - immoscout24
+    - homegate
+    - newhome
+    - allreal
+    - mobimo
+  tier2:
+    - comparis
+    - flatfox
+    - urbanhome
+    - neho
+  tier3:
+    - icasa
+    - engelvoelkers
+    - betterhomes
+
+notifications:
+  email:
+    enabled: true
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+  min_score_to_notify: 60
+
+scheduling:
+  tier1_interval_minutes: 15
+  tier2_interval_minutes: 60
+  tier3_interval_minutes: 360
+
+apis:
+  geocoding: nominatim
+  transport: sbb

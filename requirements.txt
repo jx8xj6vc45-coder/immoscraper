@@ -1,0 +1,26 @@
+# Core Libraries
+requests==2.31.0
+beautifulsoup4==4.12.3
+lxml==5.1.0
+
+# Database
+# sqlite3 is built-in
+
+# Scheduling
+APScheduler==3.10.4
+
+# Geo & Maps
+geopy==2.4.1
+
+# Email
+# smtplib is built-in
+python-dotenv==1.0.0
+
+# Config
+PyYAML==6.0.1
+
+# Data Processing
+# hashlib is built-in
+
+# Optional
+python-telegram-bot==20.7
