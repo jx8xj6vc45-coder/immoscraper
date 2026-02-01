@@ -18,7 +18,8 @@ class MobimoScraper(BaseScraper):
         return 'mobimo'
 
     def build_search_url(self) -> str:
-        return f"{self.BASE_URL}/de/immobilien/kaufen/"
+        # mobimo.ch: Aktuelle Angebote Miete und Kauf
+        return f"{self.BASE_URL}/de/immobilien/miete-und-kauf"
 
     def parse_listings(self, content: str) -> List[Listing]:
         """Parsed Mobimo Listings aus HTML."""

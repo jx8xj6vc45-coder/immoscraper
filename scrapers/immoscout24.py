@@ -18,20 +18,14 @@ class ImmoScout24Scraper(BaseScraper):
         return 'immoscout24'
 
     def build_search_url(self) -> str:
-        max_price = self.criteria.get('max_price', 2200000)
         min_rooms = self.criteria.get('min_rooms', 4.5)
-        min_area = self.criteria.get('min_area_sqm', 120)
+        min_rooms_int = int(min_rooms)
 
-        # ImmoScout24 URL-Struktur für Kaufobjekte in Zürich
-        params = (
-            f"/immobilien/kaufen/ort-zuerich"
-            f"?pf={max_price}"
-            f"&nrf={min_rooms}"
-            f"&slf={min_area}"
-            f"&t=1,2"  # 1=Wohnung, 2=Haus
-            f"&se=16"  # Sortierung: Neueste zuerst
+        # ImmoScout24.ch URL-Struktur: /de/real-estate/buy/canton-zurich
+        return (
+            f"{self.BASE_URL}/de/real-estate/buy/canton-zurich"
+            f"?nrf={min_rooms_int}"
         )
-        return f"{self.BASE_URL}{params}"
 
     def parse_listings(self, content: str) -> List[Listing]:
         listings = []

@@ -18,7 +18,8 @@ class AllrealScraper(BaseScraper):
         return 'allreal'
 
     def build_search_url(self) -> str:
-        return f"{self.BASE_URL}/immobilien/kaufen/"
+        # allreal.ch: Kauf- und Mietangebote
+        return f"https://allreal.ch/en/real-estate/purchase-rent"
 
     def parse_listings(self, content: str) -> List[Listing]:
         """Parsed Allreal Listings aus HTML."""

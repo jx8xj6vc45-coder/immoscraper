@@ -18,17 +18,8 @@ class NewhomeScraper(BaseScraper):
         return 'newhome'
 
     def build_search_url(self) -> str:
-        max_price = self.criteria.get('max_price', 2200000)
-        min_rooms = self.criteria.get('min_rooms', 4.5)
-        min_area = self.criteria.get('min_area_sqm', 120)
-
-        return (
-            f"{self.BASE_URL}/de/kaufen/immobilien/kanton-zuerich/"
-            f"?priceTo={max_price}"
-            f"&roomsFrom={min_rooms}"
-            f"&livingAreaFrom={min_area}"
-            f"&sort=date-desc"
-        )
+        # Newhome.ch: Suche über die Karte/Liste
+        return f"{self.BASE_URL}/de/kaufen/immobilien/kanton-zuerich/"
 
     def parse_listings(self, content: str) -> List[Listing]:
         listings = []

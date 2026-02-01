@@ -18,18 +18,13 @@ class HomegateScraper(BaseScraper):
         return 'homegate'
 
     def build_search_url(self) -> str:
-        max_price = self.criteria.get('max_price', 2200000)
         min_rooms = self.criteria.get('min_rooms', 4.5)
-        min_area = self.criteria.get('min_area_sqm', 120)
+        min_rooms_int = int(min_rooms)
 
-        # Homegate URL-Struktur
+        # Homegate URL-Struktur: /buy/real-estate/canton-zurich/matching-list
         return (
-            f"{self.BASE_URL}/kaufen/immobilien/kanton-zuerich/trefferliste"
-            f"?ac={max_price}"
-            f"&ah={min_rooms}"
-            f"&ag={min_area}"
-            f"&tab=list"
-            f"&o=dateCreated-desc"
+            f"{self.BASE_URL}/buy/real-estate/canton-zurich/matching-list"
+            f"?ac={min_rooms_int}"
         )
 
     def parse_listings(self, content: str) -> List[Listing]:
@@ -45,30 +40,72 @@ class HomegateScraper(BaseScraper):
         return listings
 
     def _parse_nextjs_data(self, content: str) -> List[Listing]:
-        """Extrahiert Listings aus __NEXT_DATA__."""
+        """Extrahiert Listings aus __NEXT_DATA__ oder __INITIAL_STATE__."""
         listings = []
+
+        # Versuch 1: __NEXT_DATA__
         try:
             match = re.search(
                 r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',
                 content, re.DOTALL
             )
-            if not match:
-                return listings
-
-            data = json.loads(match.group(1))
-            props = data.get('props', {}).get('pageProps', {})
-            result_list = props.get('resultList', [])
-
-            if isinstance(result_list, dict):
-                result_list = result_list.get('items', [])
-
-            for item in result_list:
-                listing = self._item_to_listing(item)
-                if listing:
-                    listings.append(listing)
-
+            if match:
+                data = json.loads(match.group(1))
+                props = data.get('props', {}).get('pageProps', {})
+                result_list = props.get('resultList', [])
+                if isinstance(result_list, dict):
+                    result_list = result_list.get('items', [])
+                for item in result_list:
+                    listing = self._item_to_listing(item)
+                    if listing:
+                        listings.append(listing)
+                if listings:
+                    return listings
         except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.debug(f"Homegate JSON parsing fehlgeschlagen: {e}")
+            logger.debug(f"Homegate __NEXT_DATA__ parsing fehlgeschlagen: {e}")
+
+        # Versuch 2: __INITIAL_STATE__ (window.__INITIAL_STATE__)
+        try:
+            match = re.search(
+                r'window\.__INITIAL_STATE__\s*=\s*({.*?});?\s*</script>',
+                content, re.DOTALL
+            )
+            if match:
+                data = json.loads(match.group(1))
+                # Verschiedene Pfade probieren
+                for key in ['resultList', 'searchResult', 'listings']:
+                    result_list = data.get(key, {})
+                    if isinstance(result_list, dict):
+                        items = result_list.get('items', result_list.get('listings', []))
+                    elif isinstance(result_list, list):
+                        items = result_list
+                    else:
+                        continue
+                    for item in items:
+                        listing = self._item_to_listing(item)
+                        if listing:
+                            listings.append(listing)
+                    if listings:
+                        return listings
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.debug(f"Homegate __INITIAL_STATE__ parsing fehlgeschlagen: {e}")
+
+        # Versuch 3: Beliebige JSON-Blöcke mit Listing-Daten
+        try:
+            for match in re.finditer(r'<script[^>]*>(.*?)</script>', content, re.DOTALL):
+                script_content = match.group(1).strip()
+                if '"numberOfRooms"' in script_content or '"sellingPrice"' in script_content:
+                    try:
+                        data = json.loads(script_content)
+                        if isinstance(data, list):
+                            for item in data:
+                                listing = self._item_to_listing(item)
+                                if listing:
+                                    listings.append(listing)
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.debug(f"Homegate Script-Block parsing fehlgeschlagen: {e}")
 
         return listings
 
@@ -126,7 +163,11 @@ class HomegateScraper(BaseScraper):
         listings = []
         soup = BeautifulSoup(content, 'lxml')
 
-        cards = soup.select('[data-test="result-list-item"], .ResultList article, .ListItem')
+        cards = soup.select(
+            '[data-test="result-list-item"], .ResultList article, .ListItem, '
+            'a[class*="ListItem"], div[class*="ResultListItem"], '
+            'article[class*="listing"], [class*="HgCardElevated"]'
+        )
 
         for card in cards:
             try:
