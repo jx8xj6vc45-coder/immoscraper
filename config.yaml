@@ -37,7 +37,7 @@ platforms:
 
 notifications:
   email:
-    enabled: true
+    enabled: false
     smtp_host: smtp.gmail.com
     smtp_port: 587
   min_score_to_notify: 60
