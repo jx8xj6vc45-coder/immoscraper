@@ -8,6 +8,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from scrapers import get_scrapers_for_tier, get_all_scrapers
+from scrapers.base import close_browser
 from services.database import Database
 from services.geocoding import GeocodingService
 from services.transport import TransportService
@@ -209,6 +210,8 @@ def main():
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
         logger.info("Agent gestoppt.")
+    finally:
+        close_browser()
 
 
 if __name__ == '__main__':

@@ -3,8 +3,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Optional
-import requests
-from bs4 import BeautifulSoup
 import time
 import random
 import logging
@@ -62,13 +60,31 @@ class Listing:
     travel_time_to_hb: Optional[int] = None
 
 
-USER_AGENTS = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
-]
+# Globaler Browser-Kontext (wird einmal erstellt und wiederverwendet)
+_browser = None
+_playwright = None
+
+
+def get_browser():
+    """Gibt eine globale Browser-Instanz zurück (Singleton)."""
+    global _browser, _playwright
+    if _browser is None:
+        from playwright.sync_api import sync_playwright
+        _playwright = sync_playwright().start()
+        _browser = _playwright.chromium.launch(headless=True)
+        logger.info("Playwright Browser gestartet (Chromium headless)")
+    return _browser
+
+
+def close_browser():
+    """Schliesst den globalen Browser."""
+    global _browser, _playwright
+    if _browser:
+        _browser.close()
+        _browser = None
+    if _playwright:
+        _playwright.stop()
+        _playwright = None
 
 
 class BaseScraper(ABC):
@@ -77,21 +93,6 @@ class BaseScraper(ABC):
     def __init__(self, config):
         self.config = config
         self.criteria = config.get('search_criteria', {})
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': random.choice(USER_AGENTS),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'de-CH,de;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0',
-        })
 
     @abstractmethod
     def get_name(self) -> str:
@@ -106,30 +107,71 @@ class BaseScraper(ABC):
         """Parsed alle Listings aus dem Response-Content."""
 
     def search(self) -> List[Listing]:
-        """Führt Suche durch und gibt gefilterte Listings zurück."""
+        """Führt Suche mit Playwright (echtem Browser) durch."""
         try:
             url = self.build_search_url()
             logger.info(f"[{self.get_name()}] Fetching {url}")
 
-            response = self.session.get(url, timeout=30)
-            response.raise_for_status()
+            browser = get_browser()
+            context = browser.new_context(
+                locale='de-CH',
+                timezone_id='Europe/Zurich',
+                viewport={'width': 1920, 'height': 1080},
+                user_agent=(
+                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/121.0.0.0 Safari/537.36'
+                ),
+            )
+            page = context.new_page()
 
-            listings = self.parse_listings(response.text)
+            try:
+                # Seite laden und auf Netzwerk-Idle warten
+                page.goto(url, wait_until='networkidle', timeout=30000)
 
-            filtered = []
-            for listing in listings:
-                listing.platform = self.get_name()
-                if self.meets_criteria(listing):
-                    filtered.append(listing)
+                # Zusätzliche Wartezeit für JS-Rendering
+                page.wait_for_timeout(3000)
 
-            # Rate limiting
-            time.sleep(random.uniform(1.5, 3.5))
+                # Cookie-Banner wegklicken falls vorhanden
+                for selector in [
+                    'button:has-text("Akzeptieren")',
+                    'button:has-text("Accept")',
+                    'button:has-text("Alle akzeptieren")',
+                    'button:has-text("OK")',
+                    '[id*="cookie"] button',
+                    '[class*="cookie"] button',
+                ]:
+                    try:
+                        btn = page.locator(selector).first
+                        if btn.is_visible(timeout=500):
+                            btn.click()
+                            page.wait_for_timeout(500)
+                            break
+                    except Exception:
+                        continue
 
-            return filtered
+                content = page.content()
+                listings = self.parse_listings(content)
 
-        except requests.RequestException as e:
-            logger.error(f"[{self.get_name()}] HTTP-Fehler: {e}")
-            return []
+                filtered = []
+                for listing in listings:
+                    listing.platform = self.get_name()
+                    if self.meets_criteria(listing):
+                        filtered.append(listing)
+
+                logger.info(
+                    f"[{self.get_name()}] {len(listings)} geparst, "
+                    f"{len(filtered)} nach Filter"
+                )
+
+                # Rate limiting
+                time.sleep(random.uniform(1.0, 2.5))
+
+                return filtered
+
+            finally:
+                context.close()
+
         except Exception as e:
             logger.error(f"[{self.get_name()}] Fehler: {e}")
             return []

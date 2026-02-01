@@ -3,6 +3,9 @@ requests==2.31.0
 beautifulsoup4==4.12.3
 lxml==5.1.0
 
+# Browser-Engine (für JS-gerenderte Websites)
+playwright==1.41.0
+
 # Database
 # sqlite3 is built-in
 
