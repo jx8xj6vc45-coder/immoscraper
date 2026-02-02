@@ -60,31 +60,9 @@ class Listing:
     travel_time_to_hb: Optional[int] = None
 
 
-# Globaler Browser-Kontext (wird einmal erstellt und wiederverwendet)
-_browser = None
-_playwright = None
-
-
-def get_browser():
-    """Gibt eine globale Browser-Instanz zurück (Singleton)."""
-    global _browser, _playwright
-    if _browser is None:
-        from playwright.sync_api import sync_playwright
-        _playwright = sync_playwright().start()
-        _browser = _playwright.chromium.launch(headless=True)
-        logger.info("Playwright Browser gestartet (Chromium headless)")
-    return _browser
-
-
 def close_browser():
-    """Schliesst den globalen Browser."""
-    global _browser, _playwright
-    if _browser:
-        _browser.close()
-        _browser = None
-    if _playwright:
-        _playwright.stop()
-        _playwright = None
+    """Kompatibilitätsstub - Browser wird jetzt pro Suche erstellt/geschlossen."""
+    pass
 
 
 class BaseScraper(ABC):
@@ -107,12 +85,21 @@ class BaseScraper(ABC):
         """Parsed alle Listings aus dem Response-Content."""
 
     def search(self) -> List[Listing]:
-        """Führt Suche mit Playwright (echtem Browser) durch."""
+        """Führt Suche mit Playwright (echtem Browser) durch.
+
+        Erstellt pro Aufruf eine eigene Browser-Instanz, damit es
+        threadsicher mit APScheduler funktioniert.
+        """
+        pw = None
+        browser = None
         try:
             url = self.build_search_url()
             logger.info(f"[{self.get_name()}] Fetching {url}")
 
-            browser = get_browser()
+            from playwright.sync_api import sync_playwright
+            pw = sync_playwright().start()
+            browser = pw.chromium.launch(headless=True)
+
             context = browser.new_context(
                 locale='de-CH',
                 timezone_id='Europe/Zurich',
@@ -150,6 +137,28 @@ class BaseScraper(ABC):
                     except Exception:
                         continue
 
+                # Versuche __INITIAL_STATE__ direkt via JS zu extrahieren
+                # (robuster als HTML-Parsing, da das JSON evtl. nicht
+                # im page.content() sichtbar ist)
+                try:
+                    js_state = page.evaluate(
+                        '() => { try { return JSON.stringify(window.__INITIAL_STATE__); } catch(e) { return null; } }'
+                    )
+                    if js_state:
+                        self._js_initial_state = js_state
+                except Exception:
+                    self._js_initial_state = None
+
+                # Versuche __NEXT_DATA__ via JS
+                try:
+                    next_data = page.evaluate(
+                        '() => { try { return JSON.stringify(window.__NEXT_DATA__); } catch(e) { return null; } }'
+                    )
+                    if next_data:
+                        self._js_next_data = next_data
+                except Exception:
+                    self._js_next_data = None
+
                 content = page.content()
                 listings = self.parse_listings(content)
 
@@ -175,6 +184,17 @@ class BaseScraper(ABC):
         except Exception as e:
             logger.error(f"[{self.get_name()}] Fehler: {e}")
             return []
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            if pw:
+                try:
+                    pw.stop()
+                except Exception:
+                    pass
 
     def meets_criteria(self, listing: Listing) -> bool:
         """Prüft ob ein Inserat die Mindestkriterien erfüllt.

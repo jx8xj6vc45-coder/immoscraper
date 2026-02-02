@@ -33,43 +33,92 @@ class HomegateScraper(BaseScraper):
 
     def parse_listings(self, content: str) -> List[Listing]:
         listings = []
+
+        # Strategie 0: JS-evaluierter __INITIAL_STATE__ (direkt aus Browser)
+        js_state = getattr(self, '_js_initial_state', None)
+        if js_state:
+            try:
+                data = json.loads(js_state)
+                result_listings = self._find_listings_in_json(data)
+                if result_listings:
+                    logger.info(f"[homegate] {len(result_listings)} Listings via JS evaluate")
+                    for item in result_listings:
+                        listing = self._item_to_listing(item)
+                        if listing:
+                            listings.append(listing)
+                    return listings
+            except (json.JSONDecodeError, Exception) as e:
+                logger.debug(f"[homegate] JS evaluate fehlgeschlagen: {e}")
+
+        # Strategie 0b: JS-evaluierter __NEXT_DATA__
+        js_next = getattr(self, '_js_next_data', None)
+        if js_next:
+            try:
+                data = json.loads(js_next)
+                result_listings = self._find_listings_in_json(data)
+                if result_listings:
+                    logger.info(f"[homegate] {len(result_listings)} Listings via JS __NEXT_DATA__")
+                    for item in result_listings:
+                        listing = self._item_to_listing(item)
+                        if listing:
+                            listings.append(listing)
+                    return listings
+            except (json.JSONDecodeError, Exception) as e:
+                logger.debug(f"[homegate] JS __NEXT_DATA__ fehlgeschlagen: {e}")
+
+        # Strategie 1: __INITIAL_STATE__ via Regex auf Raw-HTML
         listings.extend(self._parse_initial_state(content))
+
+        # Strategie 2: __NEXT_DATA__ (Next.js) als Fallback
+        if not listings:
+            listings.extend(self._parse_next_data(content))
+
+        # Strategie 3: JSON-Blob Suche
+        if not listings:
+            listings.extend(self._parse_via_evaluate(content))
+
         return listings
+
+    def _extract_json_from_html(self, content: str, var_name: str) -> dict:
+        """Extrahiert JSON aus einem window.VAR_NAME=... Pattern im HTML."""
+        pattern = re.escape(var_name) + r'\s*=\s*(\{.+?\})\s*;?\s*</script>'
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            return json.loads(match.group(1))
+
+        pattern2 = re.escape(var_name) + r'\s*=\s*(\{.*?\})\s*;\s*$'
+        match2 = re.search(pattern2, content, re.DOTALL | re.MULTILINE)
+        if match2:
+            return json.loads(match2.group(1))
+
+        return None
 
     def _parse_initial_state(self, content: str) -> List[Listing]:
         """Extrahiert Listings aus window.__INITIAL_STATE__ JSON."""
         listings = []
-        soup = BeautifulSoup(content, 'lxml')
 
-        # Finde Script-Tag mit __INITIAL_STATE__
-        script_tag = None
-        for tag in soup.find_all('script'):
-            if tag.string and 'window.__INITIAL_STATE__=' in tag.string:
-                script_tag = tag
-                break
+        data = self._extract_json_from_html(content, 'window.__INITIAL_STATE__')
+        if not data:
+            soup = BeautifulSoup(content, 'lxml')
+            for tag in soup.find_all('script'):
+                text = tag.string or tag.get_text()
+                if text and '__INITIAL_STATE__' in text:
+                    try:
+                        idx = text.index('__INITIAL_STATE__')
+                        eq_idx = text.index('=', idx)
+                        json_text = text[eq_idx + 1:].strip().rstrip(';')
+                        data = json.loads(json_text)
+                        break
+                    except (ValueError, json.JSONDecodeError):
+                        continue
 
-        if not script_tag:
+        if not data:
             logger.warning("[homegate] Kein __INITIAL_STATE__ gefunden")
             return listings
 
-        try:
-            json_text = script_tag.string.strip()
-            # Entferne den Prefix
-            prefix = 'window.__INITIAL_STATE__='
-            idx = json_text.index(prefix)
-            json_text = json_text[idx + len(prefix):]
-            data = json.loads(json_text)
-        except (json.JSONDecodeError, ValueError, AttributeError) as e:
-            logger.warning(f"[homegate] JSON-Parsing fehlgeschlagen: {e}")
-            return listings
-
-        # Pfad: resultList.search.fullSearch.result.listings
-        try:
-            result_listings = (
-                data['resultList']['search']['fullSearch']['result']['listings']
-            )
-        except (KeyError, TypeError) as e:
-            logger.warning(f"[homegate] JSON-Pfad geändert: {e}")
+        result_listings = self._find_listings_in_json(data)
+        if not result_listings:
+            logger.warning("[homegate] Keine Listings im JSON gefunden")
             return listings
 
         for item in result_listings:
@@ -78,6 +127,87 @@ class HomegateScraper(BaseScraper):
                 listings.append(listing)
 
         return listings
+
+    def _parse_next_data(self, content: str) -> List[Listing]:
+        """Fallback: Extrahiert aus __NEXT_DATA__ (Next.js)."""
+        listings = []
+        soup = BeautifulSoup(content, 'lxml')
+        tag = soup.find('script', id='__NEXT_DATA__')
+        if not tag:
+            return listings
+
+        try:
+            text = tag.string or tag.get_text()
+            data = json.loads(text)
+        except (json.JSONDecodeError, AttributeError):
+            return listings
+
+        result_listings = self._find_listings_in_json(data)
+        if result_listings:
+            logger.info(f"[homegate] {len(result_listings)} Listings via __NEXT_DATA__")
+            for item in result_listings:
+                listing = self._item_to_listing(item)
+                if listing:
+                    listings.append(listing)
+
+        return listings
+
+    def _parse_via_evaluate(self, content: str) -> List[Listing]:
+        """Fallback: Suche nach JSON-Blobs die Listing-Daten enthalten."""
+        listings = []
+
+        for match in re.finditer(r'(\{"resultList":\{.*?\})\s*;?\s*</script>', content, re.DOTALL):
+            try:
+                data = json.loads(match.group(1))
+                result_listings = self._find_listings_in_json(data)
+                if result_listings:
+                    for item in result_listings:
+                        listing = self._item_to_listing(item)
+                        if listing:
+                            listings.append(listing)
+                    return listings
+            except json.JSONDecodeError:
+                continue
+
+        return listings
+
+    def _find_listings_in_json(self, data: dict) -> list:
+        """Findet Listings-Array in verschachteltem JSON."""
+        try:
+            return data['resultList']['search']['fullSearch']['result']['listings']
+        except (KeyError, TypeError):
+            pass
+
+        for path in [
+            ['props', 'pageProps', 'resultList', 'search', 'fullSearch', 'result', 'listings'],
+            ['props', 'pageProps', 'listings'],
+            ['props', 'pageProps', 'searchResult', 'listings'],
+            ['searchResult', 'listings'],
+            ['data', 'searchResult', 'listings'],
+        ]:
+            obj = data
+            try:
+                for key in path:
+                    obj = obj[key]
+                if isinstance(obj, list) and len(obj) > 0:
+                    return obj
+            except (KeyError, TypeError):
+                continue
+
+        return self._find_key_recursive(data, 'listings', max_depth=6)
+
+    def _find_key_recursive(self, obj, target_key, max_depth=6, depth=0):
+        """Sucht rekursiv nach einem Key der eine Liste enthält."""
+        if depth > max_depth:
+            return None
+        if isinstance(obj, dict):
+            if target_key in obj and isinstance(obj[target_key], list) and len(obj[target_key]) > 3:
+                return obj[target_key]
+            for v in obj.values():
+                result = self._find_key_recursive(v, target_key, max_depth, depth + 1)
+                if result:
+                    return result
+        return None
 
     def _item_to_listing(self, item: dict) -> Listing:
         """Konvertiert ein JSON-Item in ein Listing-Objekt."""
