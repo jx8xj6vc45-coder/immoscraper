@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Immobilien-Suchagent</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+
+        header { background: #1a1a2e; color: white; padding: 20px 30px; }
+        header h1 { font-size: 22px; font-weight: 600; }
+        header p { color: #aaa; font-size: 14px; margin-top: 4px; }
+
+        .stats-bar { display: flex; gap: 24px; padding: 16px 30px; background: white; border-bottom: 1px solid #e0e0e0; flex-wrap: wrap; }
+        .stat { text-align: center; }
+        .stat-value { font-size: 24px; font-weight: 700; color: #1a1a2e; }
+        .stat-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        .content { display: flex; max-width: 1400px; margin: 0 auto; padding: 20px; gap: 20px; }
+
+        .sidebar { width: 260px; flex-shrink: 0; }
+        .filter-box { background: white; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .filter-box h3 { font-size: 13px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+        .filter-group { margin-bottom: 14px; }
+        .filter-group label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
+        .filter-group select, .filter-group input {
+            width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px;
+            font-size: 14px; background: #fafafa;
+        }
+        .filter-row { display: flex; gap: 8px; }
+        .filter-row input { width: 50%; }
+        .btn { display: block; width: 100%; padding: 10px; background: #1a1a2e; color: white;
+            border: none; border-radius: 6px; font-size: 14px; cursor: pointer; margin-top: 12px; }
+        .btn:hover { background: #16213e; }
+        .btn-clear { background: #eee; color: #666; margin-top: 6px; }
+        .btn-clear:hover { background: #ddd; }
+
+        .listings { flex: 1; min-width: 0; }
+        .listings-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .listings-header h2 { font-size: 18px; }
+        .sort-links { display: flex; gap: 4px; }
+        .sort-links a { font-size: 12px; padding: 4px 10px; border-radius: 4px; text-decoration: none;
+            color: #666; background: white; border: 1px solid #ddd; }
+        .sort-links a.active { background: #1a1a2e; color: white; border-color: #1a1a2e; }
+
+        .listing-card {
+            background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: flex; gap: 16px;
+            border-left: 4px solid #ddd; transition: box-shadow 0.2s;
+        }
+        .listing-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+        .listing-card.grade-A-plus { border-left-color: #FFD700; background: #fffef8; }
+        .listing-card.grade-A { border-left-color: #FFA500; }
+        .listing-card.grade-B { border-left-color: #4CAF50; }
+        .listing-card.grade-C { border-left-color: #2196F3; }
+
+        .listing-img { width: 160px; height: 120px; flex-shrink: 0; border-radius: 6px;
+            overflow: hidden; background: #eee; }
+        .listing-img img { width: 100%; height: 100%; object-fit: cover; }
+        .listing-img .no-img { width: 100%; height: 100%; display: flex; align-items: center;
+            justify-content: center; color: #bbb; font-size: 12px; }
+
+        .listing-info { flex: 1; min-width: 0; }
+        .listing-title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+        .listing-title a { color: #1a1a2e; text-decoration: none; }
+        .listing-title a:hover { color: #3498db; }
+        .listing-meta { display: flex; gap: 16px; font-size: 13px; color: #666; margin-bottom: 8px; flex-wrap: wrap; }
+        .listing-meta span { white-space: nowrap; }
+        .listing-price { font-size: 18px; font-weight: 700; color: #1a1a2e; margin-bottom: 6px; }
+        .listing-address { font-size: 13px; color: #888; }
+        .listing-tags { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+        .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #f0f0f0; color: #666; }
+        .tag-platform { background: #e8f4fd; color: #1976D2; }
+
+        .listing-score { width: 80px; flex-shrink: 0; text-align: center; display: flex;
+            flex-direction: column; justify-content: center; align-items: center; }
+        .score-circle { width: 56px; height: 56px; border-radius: 50%; display: flex;
+            align-items: center; justify-content: center; font-size: 16px; font-weight: 700;
+            color: white; }
+        .score-circle.high { background: #4CAF50; }
+        .score-circle.medium { background: #FF9800; }
+        .score-circle.low { background: #9E9E9E; }
+        .grade-label { font-size: 12px; font-weight: 600; margin-top: 4px; color: #666; }
+
+        .empty-state { text-align: center; padding: 60px 20px; color: #999; }
+        .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: #666; }
+
+        .score-breakdown { display: flex; gap: 8px; margin-top: 6px; }
+        .score-item { font-size: 10px; color: #999; }
+        .score-bar { display: inline-block; width: 40px; height: 4px; background: #eee; border-radius: 2px; vertical-align: middle; }
+        .score-bar-fill { height: 100%; border-radius: 2px; background: #4CAF50; }
+
+        @media (max-width: 768px) {
+            .content { flex-direction: column; padding: 12px; }
+            .sidebar { width: 100%; }
+            .listing-card { flex-direction: column; }
+            .listing-img { width: 100%; height: 180px; }
+            .listing-score { width: 100%; flex-direction: row; gap: 8px; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Immobilien-Suchagent</h1>
+        <p>Kanton Zurich &middot; Kaufobjekte</p>
+    </header>
+
+    <div class="stats-bar">
+        <div class="stat">
+            <div class="stat-value">{{ stats.total }}</div>
+            <div class="stat-label">Inserate</div>
+        </div>
+        <div class="stat">
+            <div class="stat-value">{{ stats.avg_score }}</div>
+            <div class="stat-label">&Oslash; Score</div>
+        </div>
+        {% for grade in ['A+', 'A', 'B', 'C', 'D'] %}
+        {% if stats.grades.get(grade, 0) > 0 %}
+        <div class="stat">
+            <div class="stat-value">{{ stats.grades.get(grade, 0) }}</div>
+            <div class="stat-label">Grade {{ grade }}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+        {% for platform, count in stats.platforms.items() %}
+        <div class="stat">
+            <div class="stat-value">{{ count }}</div>
+            <div class="stat-label">{{ platform }}</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="content">
+        <aside class="sidebar">
+            <form class="filter-box" method="get">
+                <h3>Filter</h3>
+
+                <div class="filter-group">
+                    <label>Sortierung</label>
+                    <select name="sort">
+                        <option value="newest" {{ 'selected' if sort == 'newest' }}>Neueste zuerst</option>
+                        <option value="score" {{ 'selected' if sort == 'score' }}>Bester Score</option>
+                        <option value="price_asc" {{ 'selected' if sort == 'price_asc' }}>Preis aufsteigend</option>
+                        <option value="price_desc" {{ 'selected' if sort == 'price_desc' }}>Preis absteigend</option>
+                        <option value="rooms" {{ 'selected' if sort == 'rooms' }}>Meiste Zimmer</option>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Grade</label>
+                    <select name="grade">
+                        <option value="">Alle</option>
+                        {% for g in ['A+', 'A', 'B', 'C', 'D'] %}
+                        <option value="{{ g }}" {{ 'selected' if grade_filter == g }}>{{ g }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Ort</label>
+                    <select name="city">
+                        <option value="">Alle</option>
+                        {% for city_name, city_count in cities %}
+                        <option value="{{ city_name }}" {{ 'selected' if city_filter == city_name }}>{{ city_name }} ({{ city_count }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Plattform</label>
+                    <select name="platform">
+                        <option value="">Alle</option>
+                        {% for p in stats.platforms.keys() %}
+                        <option value="{{ p }}" {{ 'selected' if platform_filter == p }}>{{ p }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>Preis (CHF)</label>
+                    <div class="filter-row">
+                        <input type="number" name="min_price" placeholder="Von" value="{{ min_price }}">
+                        <input type="number" name="max_price" placeholder="Bis" value="{{ max_price }}">
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <label>Min. Zimmer</label>
+                    <input type="number" name="min_rooms" step="0.5" placeholder="z.B. 4.5" value="{{ min_rooms }}">
+                </div>
+
+                <button type="submit" class="btn">Filtern</button>
+                <a href="/" class="btn btn-clear" style="text-align:center; text-decoration:none;">Alle Filter zurücksetzen</a>
+            </form>
+        </aside>
+
+        <main class="listings">
+            <div class="listings-header">
+                <h2>{{ stats.total }} Inserat{{ 'e' if stats.total != 1 }}</h2>
+            </div>
+
+            {% if listings %}
+                {% for l in listings %}
+                <div class="listing-card grade-{{ l.grade | replace('+', '-plus') if l.grade else 'none' }}">
+                    <div class="listing-img">
+                        {% if l.image_url %}
+                        <img src="{{ l.image_url }}" alt="{{ l.title }}" loading="lazy"
+                             onerror="this.parentElement.innerHTML='<div class=no-img>Kein Bild</div>'">
+                        {% else %}
+                        <div class="no-img">Kein Bild</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="listing-info">
+                        <div class="listing-price">{{ l.price_fmt }}</div>
+                        <div class="listing-title">
+                            <a href="{{ l.url }}" target="_blank" rel="noopener">{{ l.title or 'Inserat' }}</a>
+                        </div>
+                        <div class="listing-meta">
+                            {% if l.rooms %}<span>{{ l.rooms }} Zimmer</span>{% endif %}
+                            {% if l.area_sqm %}<span>{{ l.area_sqm }} m&sup2;</span>{% endif %}
+                            {% if l.travel_time_to_hb %}<span>{{ l.travel_time_to_hb }} Min zum HB</span>{% endif %}
+                        </div>
+                        <div class="listing-address">{{ l.address or l.city or '' }}</div>
+                        <div class="listing-tags">
+                            <span class="tag tag-platform">{{ l.platform }}</span>
+                            {% if l.property_type %}<span class="tag">{{ l.property_type }}</span>{% endif %}
+                            {% if l.city %}<span class="tag">{{ l.city }}</span>{% endif %}
+                        </div>
+                        {% if l.total_score %}
+                        <div class="score-breakdown">
+                            {% if l.location_score is not none %}
+                            <span class="score-item">Lage {{ l.location_score|int }}/20
+                                <span class="score-bar"><span class="score-bar-fill" style="width:{{ (l.location_score / 20 * 100)|int }}%"></span></span>
+                            </span>
+                            {% endif %}
+                            {% if l.price_score is not none %}
+                            <span class="score-item">Preis {{ l.price_score|int }}/20
+                                <span class="score-bar"><span class="score-bar-fill" style="width:{{ (l.price_score / 20 * 100)|int }}%"></span></span>
+                            </span>
+                            {% endif %}
+                            {% if l.transport_score is not none %}
+                            <span class="score-item">OV {{ l.transport_score|int }}/20
+                                <span class="score-bar"><span class="score-bar-fill" style="width:{{ (l.transport_score / 20 * 100)|int }}%"></span></span>
+                            </span>
+                            {% endif %}
+                            {% if l.education_score is not none %}
+                            <span class="score-item">Bildung {{ l.education_score|int }}/25
+                                <span class="score-bar"><span class="score-bar-fill" style="width:{{ (l.education_score / 25 * 100)|int }}%"></span></span>
+                            </span>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="listing-score">
+                        {% if l.total_score %}
+                        <div class="score-circle {{ 'high' if l.total_score >= 70 else ('medium' if l.total_score >= 45 else 'low') }}">
+                            {{ l.total_score|int }}
+                        </div>
+                        <div class="grade-label">{{ l.grade or '-' }}</div>
+                        {% else %}
+                        <div class="score-circle low">-</div>
+                        <div class="grade-label">Unbewertet</div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <h3>Keine Inserate gefunden</h3>
+                    <p>Der Suchagent hat noch keine passenden Inserate gesammelt.<br>
+                       Starte zuerst <code>python3 main.py</code> und warte auf den ersten Suchlauf.</p>
+                </div>
+            {% endif %}
+        </main>
+    </div>
+</body>
+</html>

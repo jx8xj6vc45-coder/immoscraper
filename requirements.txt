@@ -22,6 +22,9 @@ python-dotenv==1.0.0
 # Config
 PyYAML==6.0.1
 
+# Web-Oberfläche
+Flask==3.0.0
+
 # Data Processing
 # hashlib is built-in
 
