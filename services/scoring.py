@@ -308,15 +308,50 @@ class ListingScorer:
         if not city:
             return None
         city_clean = city.strip()
+
         # Direkter Match
         if city_clean in self.steuerfuss_data:
             return self.steuerfuss_data[city_clean]
+
         # Case-insensitive Match
         city_lower = city_clean.lower()
         for key, value in self.steuerfuss_data.items():
             if key.lower() == city_lower:
                 return value
+
+        # Postleitzahl entfernen (z.B. "8001 Zürich" -> "Zürich")
+        city_without_plz = re.sub(r'^\d{4}\s*', '', city_clean)
+        if city_without_plz != city_clean:
+            for key, value in self.steuerfuss_data.items():
+                if key.lower() == city_without_plz.lower():
+                    return value
+
+        # Umlaut-Varianten normalisieren
+        city_normalized = self._normalize_umlauts(city_lower)
+        for key, value in self.steuerfuss_data.items():
+            if self._normalize_umlauts(key.lower()) == city_normalized:
+                return value
+
+        # Teilmatch: Prüfen ob bekannte Gemeinde im String enthalten ist
+        for key, value in self.steuerfuss_data.items():
+            key_lower = key.lower()
+            key_normalized = self._normalize_umlauts(key_lower)
+            if key_lower in city_lower or key_normalized in city_normalized:
+                return value
+
         return None
+
+    @staticmethod
+    def _normalize_umlauts(text: str) -> str:
+        """Normalisiert Umlaute für Vergleiche."""
+        replacements = {
+            'ä': 'ae', 'ö': 'oe', 'ü': 'ue',
+            'ae': 'ä', 'oe': 'ö', 'ue': 'ü',
+        }
+        result = text
+        for old, new in replacements.items():
+            result = result.replace(old, new)
+        return result
 
     @staticmethod
     def _get_grade(total_score: float) -> str:
