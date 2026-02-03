@@ -3,6 +3,8 @@
 import re
 import json
 import logging
+import time
+import random
 from typing import List
 from bs4 import BeautifulSoup
 from scrapers.base import BaseScraper, Listing
@@ -15,21 +17,142 @@ class HomegateScraper(BaseScraper):
 
     Extrahiert Listing-Daten aus dem window.__INITIAL_STATE__ JSON-Blob.
     Gleiche Datenstruktur wie ImmoScout24.ch.
+    Unterstützt Pagination (mehrere Seiten).
     """
 
     BASE_URL = 'https://www.homegate.ch'
+    MAX_PAGES = 5  # Maximal 5 Seiten laden (ca. 100 Listings)
 
     def get_name(self) -> str:
         return 'homegate'
 
-    def build_search_url(self) -> str:
+    def build_search_url(self, page: int = 1) -> str:
         min_rooms = self.criteria.get('min_rooms', 4.5)
         min_rooms_int = int(min_rooms)
 
-        return (
+        url = (
             f"{self.BASE_URL}/buy/real-estate/canton-zurich/matching-list"
             f"?ac={min_rooms_int}"
         )
+        if page > 1:
+            url += f"&ep={page}"
+        return url
+
+    def search(self) -> List[Listing]:
+        """Überschreibt die Basis-Suche um mehrere Seiten zu laden."""
+        all_listings = []
+        seen_ids = set()
+
+        for page in range(1, self.MAX_PAGES + 1):
+            logger.info(f"[homegate] Lade Seite {page}...")
+
+            # Führe die Basis-Suche für diese Seite aus
+            page_listings = self._search_page(page)
+
+            if not page_listings:
+                logger.info(f"[homegate] Seite {page}: keine weiteren Listings")
+                break
+
+            # Deduplizierung
+            new_count = 0
+            for listing in page_listings:
+                if listing.external_id not in seen_ids:
+                    seen_ids.add(listing.external_id)
+                    all_listings.append(listing)
+                    new_count += 1
+
+            logger.info(f"[homegate] Seite {page}: {new_count} neue Listings")
+
+            # Wenn weniger als 20 Listings, sind wir am Ende
+            if len(page_listings) < 20:
+                break
+
+            # Rate limiting zwischen Seiten
+            time.sleep(random.uniform(2.0, 4.0))
+
+        logger.info(f"[homegate] Total: {len(all_listings)} Listings von {page} Seiten")
+        return all_listings
+
+    def _search_page(self, page: int) -> List[Listing]:
+        """Lädt eine einzelne Seite und gibt die Listings zurück."""
+        pw = None
+        browser = None
+        try:
+            url = self.build_search_url(page)
+            logger.debug(f"[homegate] Fetching {url}")
+
+            from playwright.sync_api import sync_playwright
+            try:
+                from playwright_stealth import stealth_sync
+                has_stealth = True
+            except ImportError:
+                has_stealth = False
+
+            pw = sync_playwright().start()
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                ]
+            )
+
+            context = browser.new_context(
+                locale='de-CH',
+                timezone_id='Europe/Zurich',
+                viewport={'width': 1920, 'height': 1080},
+                user_agent=(
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/122.0.0.0 Safari/537.36'
+                ),
+            )
+            page_obj = context.new_page()
+
+            if has_stealth:
+                stealth_sync(page_obj)
+
+            page_obj.goto(url, wait_until='networkidle', timeout=45000)
+            page_obj.wait_for_timeout(3000)
+
+            # JS-State extrahieren
+            try:
+                js_state = page_obj.evaluate(
+                    '() => { try { return JSON.stringify(window.__INITIAL_STATE__); } catch(e) { return null; } }'
+                )
+                if js_state and js_state != 'null':
+                    self._js_initial_state = js_state
+            except Exception:
+                self._js_initial_state = None
+
+            content = page_obj.content()
+            listings = self.parse_listings(content)
+
+            # Filter anwenden
+            filtered = []
+            for listing in listings:
+                listing.platform = self.get_name()
+                if self.meets_criteria(listing):
+                    filtered.append(listing)
+
+            context.close()
+            return filtered
+
+        except Exception as e:
+            logger.error(f"[homegate] Seite {page} Fehler: {e}")
+            return []
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            if pw:
+                try:
+                    pw.stop()
+                except Exception:
+                    pass
 
     def parse_listings(self, content: str) -> List[Listing]:
         listings = []
