@@ -109,6 +109,24 @@ class BaseScraper(ABC):
 
             pw = sync_playwright().start()
 
+            # Zufällige Viewport-Größen für realistischere Fingerprints
+            viewports = [
+                {'width': 1920, 'height': 1080},
+                {'width': 1536, 'height': 864},
+                {'width': 1440, 'height': 900},
+                {'width': 1366, 'height': 768},
+            ]
+            viewport = random.choice(viewports)
+
+            # Verschiedene User-Agents
+            user_agents = [
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+            ]
+            user_agent = random.choice(user_agents)
+
             # Browser mit zusätzlichen Argumenten für bessere Tarnung
             browser = pw.chromium.launch(
                 headless=True,
@@ -118,27 +136,24 @@ class BaseScraper(ABC):
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
                     '--disable-infobars',
-                    '--window-size=1920,1080',
+                    f'--window-size={viewport["width"]},{viewport["height"]}',
                     '--start-maximized',
+                    '--disable-extensions',
                 ]
             )
 
             context = browser.new_context(
                 locale='de-CH',
                 timezone_id='Europe/Zurich',
-                viewport={'width': 1920, 'height': 1080},
-                user_agent=(
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                    'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/122.0.0.0 Safari/537.36'
-                ),
+                viewport=viewport,
+                user_agent=user_agent,
                 # Zusätzliche Browser-Eigenschaften
                 extra_http_headers={
                     'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                     'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
                     'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-ch-ua-platform': '"Windows"' if 'Windows' in user_agent else '"macOS"',
                 },
             )
             page = context.new_page()
@@ -148,55 +163,75 @@ class BaseScraper(ABC):
                 stealth_sync(page)
 
             try:
-                # Zusätzliche JS-Injection für noch bessere Tarnung
+                # Erweiterte JS-Injection für bessere Tarnung
                 page.add_init_script("""
+                    // Webdriver-Erkennung verhindern
                     Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-                    Object.defineProperty(navigator, 'languages', {get: () => ['de-CH', 'de', 'en']});
-                    window.chrome = { runtime: {} };
+                    delete navigator.__proto__.webdriver;
+
+                    // Plugins simulieren
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => {
+                            const plugins = [
+                                {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
+                                {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
+                                {name: 'Native Client', filename: 'internal-nacl-plugin'},
+                            ];
+                            plugins.length = 3;
+                            return plugins;
+                        }
+                    });
+
+                    // Sprachen
+                    Object.defineProperty(navigator, 'languages', {get: () => ['de-CH', 'de', 'en-US', 'en']});
+
+                    // Chrome-Objekt
+                    window.chrome = {
+                        runtime: {},
+                        loadTimes: function() {},
+                        csi: function() {},
+                        app: {}
+                    };
+
+                    // WebGL Vendor/Renderer
+                    const getParameter = WebGLRenderingContext.prototype.getParameter;
+                    WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                        if (parameter === 37445) return 'Intel Inc.';
+                        if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+                        return getParameter.apply(this, arguments);
+                    };
+
+                    // Permissions
+                    const originalQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => (
+                        parameters.name === 'notifications' ?
+                            Promise.resolve({ state: Notification.permission }) :
+                            originalQuery(parameters)
+                    );
                 """)
 
-                # Seite laden und auf Netzwerk-Idle warten
-                page.goto(url, wait_until='networkidle', timeout=45000)
+                # Seite laden mit längerer Timeout
+                page.goto(url, wait_until='networkidle', timeout=60000)
 
-                # Längere Wartezeit für Anti-Bot-Checks
-                page.wait_for_timeout(5000)
+                # Variable Wartezeit (menschlicher)
+                page.wait_for_timeout(random.randint(3000, 6000))
 
-                # Simuliere menschliches Verhalten (Mausbewegung, Scrollen)
-                try:
-                    page.mouse.move(random.randint(100, 500), random.randint(100, 400))
-                    page.wait_for_timeout(random.randint(200, 500))
-                    page.mouse.wheel(0, random.randint(100, 300))
-                    page.wait_for_timeout(random.randint(300, 700))
-                except Exception:
-                    pass
+                # Simuliere menschliches Verhalten
+                self._simulate_human_behavior(page)
 
                 # Cookie-Banner wegklicken falls vorhanden
-                for selector in [
-                    'button:has-text("Akzeptieren")',
-                    'button:has-text("Accept")',
-                    'button:has-text("Alle akzeptieren")',
-                    'button:has-text("OK")',
-                    '[id*="cookie"] button',
-                    '[class*="cookie"] button',
-                ]:
-                    try:
-                        btn = page.locator(selector).first
-                        if btn.is_visible(timeout=500):
-                            btn.click()
-                            page.wait_for_timeout(500)
-                            break
-                    except Exception:
-                        continue
+                self._handle_cookie_banner(page)
 
                 # Prüfe ob CAPTCHA/Bot-Schutz angezeigt wird
                 content_check = page.content()
-                if 'captcha' in content_check.lower() or 'datadome' in content_check.lower():
-                    logger.warning(f"[{self.get_name()}] CAPTCHA/Bot-Schutz erkannt - warte und versuche erneut...")
-                    page.wait_for_timeout(10000)  # 10 Sekunden warten
-                    # Nochmal scrollen und warten
-                    page.mouse.wheel(0, 200)
-                    page.wait_for_timeout(5000)
+                bot_detected = any(x in content_check.lower() for x in ['captcha', 'datadome', 'blocked', 'robot'])
+
+                if bot_detected:
+                    logger.warning(f"[{self.get_name()}] Bot-Schutz erkannt - warte und versuche erneut...")
+                    # Längere Wartezeit und mehr menschliches Verhalten
+                    page.wait_for_timeout(random.randint(8000, 15000))
+                    self._simulate_human_behavior(page)
+                    page.wait_for_timeout(random.randint(3000, 5000))
 
                 # Versuche verschiedene JS-Variablen zu extrahieren
                 self._js_initial_state = None
@@ -281,6 +316,52 @@ class BaseScraper(ABC):
                     pw.stop()
                 except Exception:
                     pass
+
+    def _simulate_human_behavior(self, page):
+        """Simuliert menschliches Verhalten auf der Seite."""
+        try:
+            # Zufällige Mausbewegungen
+            for _ in range(random.randint(2, 4)):
+                x = random.randint(100, 800)
+                y = random.randint(100, 500)
+                page.mouse.move(x, y, steps=random.randint(5, 15))
+                page.wait_for_timeout(random.randint(100, 300))
+
+            # Scrollen
+            scroll_amount = random.randint(200, 500)
+            page.mouse.wheel(0, scroll_amount)
+            page.wait_for_timeout(random.randint(500, 1000))
+
+            # Nochmal nach oben scrollen
+            page.mouse.wheel(0, -random.randint(100, 200))
+            page.wait_for_timeout(random.randint(300, 600))
+        except Exception:
+            pass
+
+    def _handle_cookie_banner(self, page):
+        """Klickt Cookie-Banner weg falls vorhanden."""
+        cookie_selectors = [
+            'button:has-text("Akzeptieren")',
+            'button:has-text("Accept")',
+            'button:has-text("Alle akzeptieren")',
+            'button:has-text("Zustimmen")',
+            'button:has-text("OK")',
+            'button:has-text("Einverstanden")',
+            '[id*="cookie"] button',
+            '[class*="cookie"] button',
+            '[data-testid*="cookie"] button',
+            '.cookie-banner button',
+            '#onetrust-accept-btn-handler',
+        ]
+        for selector in cookie_selectors:
+            try:
+                btn = page.locator(selector).first
+                if btn.is_visible(timeout=500):
+                    btn.click()
+                    page.wait_for_timeout(random.randint(300, 700))
+                    break
+            except Exception:
+                continue
 
     def meets_criteria(self, listing: Listing) -> bool:
         """Prüft ob ein Inserat die Mindestkriterien erfüllt.

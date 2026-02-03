@@ -20,12 +20,14 @@ search_criteria:
 
 platforms:
   tier1:
-    # immoscout24 deaktiviert wegen starkem Bot-Schutz (DataDome)
+    # immoscout24 wieder aktiviert mit verbesserten Anti-Bot-Massnahmen
+    - immoscout24
     - homegate
     - allreal
     - mobimo
   tier2:
-    # newhome deaktiviert - keine Listings gefunden
+    # newhome wieder aktiviert mit verbessertem Parsing
+    - newhome
     - comparis
     - flatfox
     - urbanhome
@@ -34,10 +36,6 @@ platforms:
     - icasa
     - engelvoelkers
     - betterhomes
-  # Deaktiviert wegen Bot-Schutz:
-  disabled:
-    - immoscout24
-    - newhome
 
 notifications:
   email:

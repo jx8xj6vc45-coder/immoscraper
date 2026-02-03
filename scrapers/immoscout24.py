@@ -26,13 +26,27 @@ class ImmoScout24Scraper(BaseScraper):
         return 'immoscout24'
 
     def build_search_url(self) -> str:
+        """Baut Such-URL mit allen relevanten Filtern."""
         min_rooms = self.criteria.get('min_rooms', 4.5)
         min_rooms_int = int(min_rooms)
+        max_price = self.criteria.get('max_price', 2200000)
 
+        # Verwende spezifischere Such-URL mit mehr Parametern
+        # nrf = number of rooms from, pf = price from, pt = price to
         return (
-            f"{self.BASE_URL}/de/real-estate/buy/canton-zurich"
-            f"?nrf={min_rooms_int}"
+            f"{self.BASE_URL}/de/immobilien/kaufen/kanton-zuerich"
+            f"?nrf={min_rooms_int}&pt={max_price}&map=1"
         )
+
+    def get_alternative_urls(self) -> list:
+        """Alternative URLs falls Hauptsuche blockiert wird."""
+        min_rooms = self.criteria.get('min_rooms', 4.5)
+        min_rooms_int = int(min_rooms)
+        return [
+            f"{self.BASE_URL}/de/real-estate/buy/canton-zurich?nrf={min_rooms_int}",
+            f"{self.BASE_URL}/de/wohnung/kaufen/kanton-zuerich?nrf={min_rooms_int}",
+            f"{self.BASE_URL}/de/haus/kaufen/kanton-zuerich?nrf={min_rooms_int}",
+        ]
 
     def parse_listings(self, content: str) -> List[Listing]:
         listings = []

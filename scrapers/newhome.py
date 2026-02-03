@@ -24,7 +24,24 @@ class NewhomeScraper(BaseScraper):
         return 'newhome'
 
     def build_search_url(self) -> str:
-        return f"{self.BASE_URL}/de/kaufen/immobilien/kanton-zuerich/"
+        """Baut Such-URL mit Filtern für Kanton Zürich."""
+        min_rooms = self.criteria.get('min_rooms', 4.5)
+        min_rooms_int = int(min_rooms)
+        max_price = self.criteria.get('max_price', 2200000)
+
+        # Newhome verwendet andere URL-Struktur mit Query-Parametern
+        return (
+            f"{self.BASE_URL}/de/kaufen/immobilien/kanton-zuerich/"
+            f"?rooms={min_rooms_int}&price_to={max_price}"
+        )
+
+    def get_alternative_urls(self) -> list:
+        """Alternative URLs für verschiedene Immobilientypen."""
+        return [
+            f"{self.BASE_URL}/de/kaufen/wohnung/kanton-zuerich/",
+            f"{self.BASE_URL}/de/kaufen/einfamilienhaus/kanton-zuerich/",
+            f"{self.BASE_URL}/de/kaufen/mehrfamilienhaus/kanton-zuerich/",
+        ]
 
     def _save_debug_html(self, content: str):
         """Speichert HTML zur Analyse."""
