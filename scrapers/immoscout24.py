@@ -3,6 +3,7 @@
 import re
 import json
 import logging
+import os
 from typing import List
 from bs4 import BeautifulSoup
 from scrapers.base import BaseScraper, Listing
@@ -13,8 +14,10 @@ logger = logging.getLogger(__name__)
 class ImmoScout24Scraper(BaseScraper):
     """Scraper für immoscout24.ch - grösste Schweizer Immobilienplattform.
 
-    Extrahiert Listing-Daten aus dem window.__INITIAL_STATE__ JSON-Blob,
-    der im gerenderten HTML eingebettet ist.
+    Verwendet mehrere Strategien zur Datenextraktion:
+    1. window.__INITIAL_STATE__ JSON
+    2. __NEXT_DATA__ JSON (Next.js)
+    3. Direkte HTML-Parsing der Listing-Cards
     """
 
     BASE_URL = 'https://www.immoscout24.ch'
@@ -33,6 +36,9 @@ class ImmoScout24Scraper(BaseScraper):
 
     def parse_listings(self, content: str) -> List[Listing]:
         listings = []
+
+        # Debug: HTML speichern für Analyse
+        self._save_debug_html(content)
 
         # Strategie 0: JS-evaluierter __INITIAL_STATE__ (direkt aus Browser)
         js_state = getattr(self, '_js_initial_state', None)
@@ -66,18 +72,53 @@ class ImmoScout24Scraper(BaseScraper):
             except (json.JSONDecodeError, Exception) as e:
                 logger.debug(f"[immoscout24] JS __NEXT_DATA__ fehlgeschlagen: {e}")
 
+        # Strategie 0c: Andere Window-Variablen durchsuchen
+        js_window_vars = getattr(self, '_js_window_vars', {})
+        for var_name, var_content in js_window_vars.items():
+            try:
+                data = json.loads(var_content)
+                result_listings = self._find_listings_in_json(data)
+                if result_listings:
+                    logger.info(f"[immoscout24] {len(result_listings)} Listings via {var_name}")
+                    for item in result_listings:
+                        listing = self._item_to_listing(item)
+                        if listing:
+                            listings.append(listing)
+                    return listings
+            except (json.JSONDecodeError, Exception):
+                continue
+
         # Strategie 1: __INITIAL_STATE__ via Regex auf Raw-HTML
         listings.extend(self._parse_initial_state(content))
+        if listings:
+            return listings
 
         # Strategie 2: __NEXT_DATA__ (Next.js) als Fallback
-        if not listings:
-            listings.extend(self._parse_next_data(content))
+        listings.extend(self._parse_next_data(content))
+        if listings:
+            return listings
 
-        # Strategie 3: page.evaluate() Ergebnis via JS-Extraktion
-        if not listings:
-            listings.extend(self._parse_via_evaluate(content))
+        # Strategie 3: Suche nach JSON-Blobs im HTML
+        listings.extend(self._parse_json_blobs(content))
+        if listings:
+            return listings
+
+        # Strategie 4: Direkte HTML-Parsing der Listing-Cards
+        listings.extend(self._parse_html_cards(content))
 
         return listings
+
+    def _save_debug_html(self, content: str):
+        """Speichert HTML zur Analyse in data/debug/."""
+        try:
+            debug_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'debug')
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = os.path.join(debug_dir, 'immoscout24_last.html')
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.debug(f"[immoscout24] HTML gespeichert: {debug_file}")
+        except Exception as e:
+            logger.debug(f"[immoscout24] Debug-HTML speichern fehlgeschlagen: {e}")
 
     def _extract_json_from_html(self, content: str, var_name: str) -> dict:
         """Extrahiert JSON aus einem window.VAR_NAME=... Pattern im HTML."""
@@ -157,23 +198,120 @@ class ImmoScout24Scraper(BaseScraper):
 
         return listings
 
-    def _parse_via_evaluate(self, content: str) -> List[Listing]:
+    def _parse_json_blobs(self, content: str) -> List[Listing]:
         """Fallback: Suche nach JSON-Blobs die Listing-Daten enthalten."""
         listings = []
+        soup = BeautifulSoup(content, 'lxml')
 
-        # Suche nach grossen JSON-Objekten im HTML die 'listings' enthalten
-        for match in re.finditer(r'(\{"resultList":\{.*?\})\s*;?\s*</script>', content, re.DOTALL):
-            try:
-                data = json.loads(match.group(1))
-                result_listings = self._find_listings_in_json(data)
-                if result_listings:
-                    for item in result_listings:
-                        listing = self._item_to_listing(item)
-                        if listing:
-                            listings.append(listing)
-                    return listings
-            except json.JSONDecodeError:
+        # Suche in allen Script-Tags nach JSON mit Listings
+        for tag in soup.find_all('script'):
+            text = tag.string or tag.get_text() or ''
+            if len(text) < 500:  # Zu kurz für Listing-Daten
                 continue
+
+            # Versuche JSON zu extrahieren
+            for pattern in [
+                r'(\{["\']resultList["\'].*\})',
+                r'(\{["\']listings["\'].*\})',
+                r'(\{["\']searchResult["\'].*\})',
+                r'(\{["\']props["\'].*\})',
+            ]:
+                for match in re.finditer(pattern, text, re.DOTALL):
+                    try:
+                        # Versuche das JSON zu parsen
+                        json_str = match.group(1)
+                        data = json.loads(json_str)
+                        result_listings = self._find_listings_in_json(data)
+                        if result_listings:
+                            logger.info(f"[immoscout24] {len(result_listings)} Listings via JSON-Blob")
+                            for item in result_listings:
+                                listing = self._item_to_listing(item)
+                                if listing:
+                                    listings.append(listing)
+                            return listings
+                    except (json.JSONDecodeError, Exception):
+                        continue
+
+        return listings
+
+    def _parse_html_cards(self, content: str) -> List[Listing]:
+        """Fallback: Extrahiert Listings direkt aus HTML-Elementen."""
+        listings = []
+        soup = BeautifulSoup(content, 'lxml')
+
+        # Suche nach Listing-Links mit typischen ImmoScout24 URL-Patterns
+        # Format: /de/d/wohnung-kaufen/... oder /de/d/haus-kaufen/...
+        listing_links = soup.find_all('a', href=re.compile(r'/de/d/(wohnung|haus|immobilie)-(kaufen|mieten)/'))
+
+        seen_urls = set()
+        for link in listing_links:
+            href = link.get('href', '')
+            if href in seen_urls:
+                continue
+            seen_urls.add(href)
+
+            # Versuche Listing-ID aus URL zu extrahieren
+            id_match = re.search(r'/(\d+)(?:\?|$)', href)
+            if not id_match:
+                continue
+
+            listing = Listing()
+            listing.external_id = f"is24-{id_match.group(1)}"
+            listing.url = f"{self.BASE_URL}{href}" if href.startswith('/') else href
+
+            # Versuche Titel zu finden (im Link oder parent)
+            card = link.find_parent(['article', 'div', 'li'])
+            if card:
+                # Titel
+                title_el = card.find(['h2', 'h3', 'h4']) or link
+                listing.title = title_el.get_text(strip=True)[:200] if title_el else ''
+
+                # Preis
+                price_patterns = [
+                    r"CHF\s*([\d']+)",
+                    r"([\d']+)\s*CHF",
+                    r"Fr\.\s*([\d']+)",
+                ]
+                card_text = card.get_text()
+                for pattern in price_patterns:
+                    price_match = re.search(pattern, card_text)
+                    if price_match:
+                        price_str = price_match.group(1).replace("'", "").replace(" ", "")
+                        try:
+                            listing.price = int(price_str)
+                        except ValueError:
+                            pass
+                        break
+
+                # Zimmer
+                rooms_match = re.search(r'(\d+(?:[.,]\d)?)\s*(?:Zimmer|Zi\.?|rooms?)', card_text, re.I)
+                if rooms_match:
+                    listing.rooms = float(rooms_match.group(1).replace(',', '.'))
+
+                # Fläche
+                area_match = re.search(r'(\d+)\s*m[²2]', card_text)
+                if area_match:
+                    listing.area_sqm = int(area_match.group(1))
+
+                # Ort
+                location_patterns = [
+                    r'(\d{4})\s+([A-Za-zäöüÄÖÜ\-\s]+?)(?:\s*,|\s*$)',
+                    r'in\s+([A-Za-zäöüÄÖÜ\-\s]+)',
+                ]
+                for pattern in location_patterns:
+                    loc_match = re.search(pattern, card_text)
+                    if loc_match:
+                        if loc_match.lastindex >= 2:
+                            listing.city = loc_match.group(2).strip()
+                        else:
+                            listing.city = loc_match.group(1).strip()
+                        break
+
+            if listing.title:
+                listings.append(listing)
+
+        if listings:
+            logger.info(f"[immoscout24] {len(listings)} Listings via HTML-Cards")
 
         return listings
 

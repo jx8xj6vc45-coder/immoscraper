@@ -137,27 +137,52 @@ class BaseScraper(ABC):
                     except Exception:
                         continue
 
-                # Versuche __INITIAL_STATE__ direkt via JS zu extrahieren
-                # (robuster als HTML-Parsing, da das JSON evtl. nicht
-                # im page.content() sichtbar ist)
-                try:
-                    js_state = page.evaluate(
-                        '() => { try { return JSON.stringify(window.__INITIAL_STATE__); } catch(e) { return null; } }'
-                    )
-                    if js_state:
-                        self._js_initial_state = js_state
-                except Exception:
-                    self._js_initial_state = None
+                # Versuche verschiedene JS-Variablen zu extrahieren
+                self._js_initial_state = None
+                self._js_next_data = None
+                self._js_preloaded_state = None
 
-                # Versuche __NEXT_DATA__ via JS
+                # Liste von möglichen State-Variablen
+                js_vars = [
+                    ('__INITIAL_STATE__', '_js_initial_state'),
+                    ('__NEXT_DATA__', '_js_next_data'),
+                    ('__PRELOADED_STATE__', '_js_preloaded_state'),
+                    ('__NUXT__', '_js_preloaded_state'),
+                    ('__APP_INITIAL_STATE__', '_js_initial_state'),
+                ]
+                for var_name, attr_name in js_vars:
+                    try:
+                        result = page.evaluate(
+                            f'() => {{ try {{ return JSON.stringify(window.{var_name}); }} catch(e) {{ return null; }} }}'
+                        )
+                        if result and result != 'null' and result != 'undefined':
+                            setattr(self, attr_name, result)
+                            logger.debug(f"[{self.get_name()}] {var_name} gefunden ({len(result)} bytes)")
+                    except Exception:
+                        pass
+
+                # Suche nach window-Properties die 'state', 'data' oder 'props' enthalten
                 try:
-                    next_data = page.evaluate(
-                        '() => { try { return JSON.stringify(window.__NEXT_DATA__); } catch(e) { return null; } }'
-                    )
-                    if next_data:
-                        self._js_next_data = next_data
+                    found_vars = page.evaluate('''() => {
+                        const results = {};
+                        for (const key of Object.keys(window)) {
+                            if (key.includes('STATE') || key.includes('DATA') || key.includes('PROPS')) {
+                                try {
+                                    const val = window[key];
+                                    if (val && typeof val === 'object') {
+                                        results[key] = JSON.stringify(val).substring(0, 50000);
+                                    }
+                                } catch(e) {}
+                            }
+                        }
+                        return results;
+                    }''')
+                    if found_vars:
+                        self._js_window_vars = found_vars
+                        for k in found_vars.keys():
+                            logger.debug(f"[{self.get_name()}] Window-Var gefunden: {k}")
                 except Exception:
-                    self._js_next_data = None
+                    self._js_window_vars = {}
 
                 content = page.content()
                 listings = self.parse_listings(content)

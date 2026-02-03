@@ -3,6 +3,7 @@
 import re
 import json
 import logging
+import os
 from typing import List
 from bs4 import BeautifulSoup
 from scrapers.base import BaseScraper, Listing
@@ -25,8 +26,58 @@ class NewhomeScraper(BaseScraper):
     def build_search_url(self) -> str:
         return f"{self.BASE_URL}/de/kaufen/immobilien/kanton-zuerich/"
 
+    def _save_debug_html(self, content: str):
+        """Speichert HTML zur Analyse."""
+        try:
+            debug_dir = os.path.join(os.path.dirname(__file__), '..', 'data', 'debug')
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = os.path.join(debug_dir, 'newhome_last.html')
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except Exception:
+            pass
+
     def parse_listings(self, content: str) -> List[Listing]:
         listings = []
+
+        # Debug speichern
+        self._save_debug_html(content)
+
+        # Versuche zuerst JS-evaluierte Daten
+        for attr in ['_js_initial_state', '_js_next_data', '_js_preloaded_state']:
+            js_data = getattr(self, attr, None)
+            if js_data:
+                try:
+                    data = json.loads(js_data)
+                    found = self._find_listings_recursive(data)
+                    if found:
+                        logger.info(f"[newhome] {len(found)} Listings via {attr}")
+                        for item in found:
+                            listing = self._json_to_listing(item)
+                            if listing:
+                                listings.append(listing)
+                        if listings:
+                            return listings
+                except (json.JSONDecodeError, Exception):
+                    continue
+
+        # Window-Variablen durchsuchen
+        js_window_vars = getattr(self, '_js_window_vars', {})
+        for var_name, var_content in js_window_vars.items():
+            try:
+                data = json.loads(var_content)
+                found = self._find_listings_recursive(data)
+                if found:
+                    logger.info(f"[newhome] {len(found)} Listings via {var_name}")
+                    for item in found:
+                        listing = self._json_to_listing(item)
+                        if listing:
+                            listings.append(listing)
+                    if listings:
+                        return listings
+            except (json.JSONDecodeError, Exception):
+                continue
+
         soup = BeautifulSoup(content, 'lxml')
 
         # Versuche JSON-LD Schema.org Daten
@@ -115,16 +166,55 @@ class NewhomeScraper(BaseScraper):
         except Exception:
             return None
 
+    def _find_listings_recursive(self, obj, depth=0, max_depth=8):
+        """Sucht rekursiv nach Arrays die Listing-Objekte enthalten könnten."""
+        if depth > max_depth:
+            return None
+
+        if isinstance(obj, list) and len(obj) >= 3:
+            # Prüfe ob die Liste Objekte mit listing-typischen Keys enthält
+            sample = obj[0] if obj else {}
+            if isinstance(sample, dict):
+                listing_keys = ['id', 'price', 'title', 'rooms', 'address', 'street', 'city']
+                matches = sum(1 for k in listing_keys if k.lower() in [x.lower() for x in sample.keys()])
+                if matches >= 2:
+                    return obj
+
+        if isinstance(obj, dict):
+            # Suche nach bekannten Keys
+            for key in ['listings', 'results', 'items', 'properties', 'searchResults', 'objects']:
+                if key in obj:
+                    val = obj[key]
+                    if isinstance(val, list) and len(val) >= 1:
+                        return val
+                    elif isinstance(val, dict):
+                        result = self._find_listings_recursive(val, depth + 1, max_depth)
+                        if result:
+                            return result
+
+            # Rekursiv weitersuchen
+            for v in obj.values():
+            for v in obj.values():
+                result = self._find_listings_recursive(v, depth + 1, max_depth)
+                if result:
+                    return result
+
+        return None
+
     def _parse_html_generic(self, soup: BeautifulSoup) -> List[Listing]:
         """Generisches HTML-Parsing: findet Listing-Cards über Heuristiken."""
         listings = []
 
         # Finde alle Links die nach Immobilien-Detail-Seiten aussehen
+        # Newhome-spezifische Patterns hinzugefügt
         seen_urls = set()
         for link in soup.find_all('a', href=True):
             href = link['href']
-            if not re.search(r'/(?:kaufen|buy|objekt|property|detail|immobilien)/.*\d', href):
-                continue
+            # Mehrere URL-Patterns für Newhome
+            if not re.search(r'/(?:kaufen|buy|objekt|object|property|detail|immobilien|expose|inserat)/.*\d', href):
+                # Auch Links die direkt auf IDs enden
+                if not re.search(r'/\d{5,}(?:/|$)', href):
+                    continue
             if href in seen_urls:
                 continue
             seen_urls.add(href)
