@@ -3,7 +3,10 @@
 import sqlite3
 import json
 import os
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'listings.db')
 
@@ -38,13 +41,15 @@ CREATE TABLE IF NOT EXISTS listings (
     url TEXT,
     image_url TEXT,
 
-    -- Scores (Total: 105 Punkte)
+    -- Scores (Total: 120 Punkte)
     total_score REAL,
     location_score REAL,
     price_score REAL,
     features_score REAL,
     transport_score REAL,
     education_score REAL,
+    steuerfuss_score REAL,
+    steuerfuss INTEGER,
     grade TEXT,
 
     -- Bildungs-Details
@@ -96,6 +101,20 @@ class Database:
     def _init_db(self):
         with self._get_conn() as conn:
             conn.executescript(SCHEMA)
+            # Migration: Add steuerfuss columns if missing
+            self._migrate_add_steuerfuss(conn)
+
+    def _migrate_add_steuerfuss(self, conn):
+        """Fügt steuerfuss Spalten hinzu falls nicht vorhanden."""
+        try:
+            cursor = conn.execute("PRAGMA table_info(listings)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'steuerfuss_score' not in columns:
+                conn.execute("ALTER TABLE listings ADD COLUMN steuerfuss_score REAL")
+            if 'steuerfuss' not in columns:
+                conn.execute("ALTER TABLE listings ADD COLUMN steuerfuss INTEGER")
+        except Exception as e:
+            logger.warning(f"Steuerfuss Migration Fehler: {e}")
 
     def listing_exists(self, listing_hash):
         """Prüft ob ein Listing (per Hash) bereits existiert."""
@@ -127,13 +146,13 @@ class Database:
                     property_type, ownership_type,
                     url, image_url,
                     total_score, location_score, price_score, features_score,
-                    transport_score, education_score, grade,
+                    transport_score, education_score, steuerfuss_score, steuerfuss, grade,
                     maturitaetsquote, nearest_school_distance,
                     gymnasium_nearby, nearby_schools_json,
                     travel_time_to_hb
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
             """, (
                 listing.external_id, listing.listing_hash, listing.platform,
@@ -147,6 +166,7 @@ class Database:
                 listing.total_score, listing.location_score,
                 listing.price_score, listing.features_score,
                 listing.transport_score, listing.education_score,
+                listing.steuerfuss_score, listing.steuerfuss,
                 listing.grade,
                 listing.maturitaetsquote, listing.nearest_school_distance,
                 listing.gymnasium_nearby,

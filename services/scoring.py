@@ -1,4 +1,4 @@
-"""Scoring-Engine: Bewertet Immobilien-Listings auf einer 105-Punkte-Skala."""
+"""Scoring-Engine: Bewertet Immobilien-Listings auf einer 120-Punkte-Skala."""
 
 import re
 import json
@@ -21,12 +21,13 @@ ZURICH_CITY_VARIANTS = {
 
 
 class ListingScorer:
-    """Bewertet Listings nach dem 105-Punkte-System."""
+    """Bewertet Listings nach dem 120-Punkte-System."""
 
     def __init__(self, config):
         self.config = config
         self.criteria = config.get('search_criteria', {})
         self._load_maturitaetsquoten()
+        self._load_steuerfuss()
 
     def _load_maturitaetsquoten(self):
         """Lädt Maturitätsquoten aus JSON-Datei."""
@@ -41,20 +42,34 @@ class ListingScorer:
             logger.warning("Maturitätsquoten-Datei nicht gefunden, verwende leere Daten")
             self.maturitaetsquoten = {}
 
+    def _load_steuerfuss(self):
+        """Lädt Steuerfuss-Daten aus JSON-Datei."""
+        data_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            'data', 'steuerfuss.json'
+        )
+        try:
+            with open(data_path, 'r', encoding='utf-8') as f:
+                self.steuerfuss_data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            logger.warning("Steuerfuss-Datei nicht gefunden, verwende leere Daten")
+            self.steuerfuss_data = {}
+
     def score_listing(self, listing) -> dict:
         """Berechnet den Gesamtscore eines Listings.
 
         Returns:
             dict mit 'total', 'location', 'price', 'features',
-            'transport', 'education', 'grade' und 'breakdown'.
+            'transport', 'education', 'steuerfuss', 'grade' und 'breakdown'.
         """
         location = self._score_location(listing)
         price = self._score_price(listing)
         features = self._score_features(listing)
         transport = self._score_transport(listing)
         education = self._score_education(listing)
+        steuerfuss = self._score_steuerfuss(listing)
 
-        total = location + price + features + transport + education
+        total = location + price + features + transport + education + steuerfuss
         grade = self._get_grade(total)
 
         return {
@@ -64,6 +79,7 @@ class ListingScorer:
             'features': round(features, 1),
             'transport': round(transport, 1),
             'education': round(education, 1),
+            'steuerfuss': round(steuerfuss, 1),
             'grade': grade,
             'breakdown': {
                 'location': round(location, 1),
@@ -71,6 +87,7 @@ class ListingScorer:
                 'features': round(features, 1),
                 'transport': round(transport, 1),
                 'education': round(education, 1),
+                'steuerfuss': round(steuerfuss, 1),
             },
         }
 
@@ -261,16 +278,56 @@ class ListingScorer:
                 return value
         return None
 
+    def _score_steuerfuss(self, listing) -> float:
+        """Steuerfuss-Score (0-15 Punkte). Tiefer = besser."""
+        steuerfuss = self._get_steuerfuss(listing.city)
+
+        # Steuerfuss am Listing speichern für Anzeige
+        listing.steuerfuss = steuerfuss
+
+        if steuerfuss is None:
+            return 7  # Neutral wenn unbekannt
+
+        # Tiefere Steuerfüsse = mehr Punkte
+        # Zürich Kanton: ca. 69% (Rüschlikon) bis 130% (Fischenthal)
+        if steuerfuss <= 80:
+            return 15
+        elif steuerfuss <= 90:
+            return 12
+        elif steuerfuss <= 100:
+            return 10
+        elif steuerfuss <= 110:
+            return 7
+        elif steuerfuss <= 120:
+            return 4
+        else:
+            return 0
+
+    def _get_steuerfuss(self, city: str) -> Optional[int]:
+        """Holt Steuerfuss für eine Gemeinde."""
+        if not city:
+            return None
+        city_clean = city.strip()
+        # Direkter Match
+        if city_clean in self.steuerfuss_data:
+            return self.steuerfuss_data[city_clean]
+        # Case-insensitive Match
+        city_lower = city_clean.lower()
+        for key, value in self.steuerfuss_data.items():
+            if key.lower() == city_lower:
+                return value
+        return None
+
     @staticmethod
     def _get_grade(total_score: float) -> str:
-        """Bestimmt das Grade basierend auf dem Gesamtscore."""
-        if total_score >= 90:
+        """Bestimmt das Grade basierend auf dem Gesamtscore (max 120)."""
+        if total_score >= 102:  # 85%
             return 'A+'
-        elif total_score >= 80:
+        elif total_score >= 90:  # 75%
             return 'A'
-        elif total_score >= 70:
+        elif total_score >= 78:  # 65%
             return 'B'
-        elif total_score >= 60:
+        elif total_score >= 66:  # 55%
             return 'C'
         else:
             return 'D'

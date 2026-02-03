@@ -9,6 +9,7 @@ from flask import Flask, render_template, request, jsonify
 app = Flask(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'listings.db')
+ITEMS_PER_PAGE = 20
 
 # Status für Scraper-Trigger
 scraper_status = {'running': False, 'last_run': None, 'message': ''}
@@ -44,6 +45,9 @@ def index():
     max_price = request.args.get('max_price', '', type=str)
     min_rooms = request.args.get('min_rooms', '', type=str)
     only_new = request.args.get('only_new', '')
+    page = request.args.get('page', 1, type=int)
+    if page < 1:
+        page = 1
 
     query = "SELECT * FROM listings WHERE is_active = 1"
     params = []
@@ -100,7 +104,7 @@ def index():
         else:
             l['is_new'] = False
 
-    # Statistiken
+    # Statistiken (vor Pagination berechnen)
     new_count = sum(1 for l in listings if l.get('is_new'))
     stats = {
         'total': len(listings),
@@ -126,11 +130,20 @@ def index():
     # Sortierte Städte für Filter
     cities_sorted = sorted(stats['cities'].items(), key=lambda x: -x[1])
 
+    # Pagination
+    total_items = len(listings)
+    total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    if page > total_pages and total_pages > 0:
+        page = total_pages
+    start_idx = (page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    listings_page = listings[start_idx:end_idx]
+
     db.close()
 
     return render_template(
         'index.html',
-        listings=listings,
+        listings=listings_page,
         stats=stats,
         cities=cities_sorted,
         sort=sort,
@@ -142,6 +155,9 @@ def index():
         min_rooms=min_rooms,
         only_new=only_new,
         scraper_status=scraper_status,
+        page=page,
+        total_pages=total_pages,
+        total_items=total_items,
     )
 
 

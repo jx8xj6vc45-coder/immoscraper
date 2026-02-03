@@ -48,6 +48,8 @@ class Listing:
     features_score: Optional[float] = None
     transport_score: Optional[float] = None
     education_score: Optional[float] = None
+    steuerfuss_score: Optional[float] = None
+    steuerfuss: Optional[int] = None
     grade: str = ''
 
     # Bildung

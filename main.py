@@ -112,6 +112,7 @@ def run_search_cycle(tier='all'):
                 listing.features_score = score_data['features']
                 listing.transport_score = score_data['transport']
                 listing.education_score = score_data['education']
+                listing.steuerfuss_score = score_data['steuerfuss']
                 listing.grade = score_data['grade']
 
                 # Speichern
@@ -122,7 +123,7 @@ def run_search_cycle(tier='all'):
                 logger.info(
                     f"  [{listing.grade}] {listing.title} | "
                     f"{format_price(listing.price)} | "
-                    f"Score: {listing.total_score}/105"
+                    f"Score: {listing.total_score}/120"
                 )
 
             db.log_search(platform_name, len(listings), new_count)
