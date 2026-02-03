@@ -33,6 +33,8 @@ class GeocodingService:
     def geocode(self, address: str, city: str = '') -> dict:
         """Gibt Lat/Lon für eine Adresse zurück.
 
+        Versucht zuerst die volle Adresse, dann als Fallback das Ortszentrum.
+
         Returns:
             dict mit 'latitude', 'longitude' oder leeres dict.
         """
@@ -47,11 +49,32 @@ class GeocodingService:
         if cache_key in _geocode_cache:
             return _geocode_cache[cache_key]
 
+        # Versuche volle Adresse
         result = self._geocode_fn(full_address)
         if result:
             _geocode_cache[cache_key] = result
+            return result
 
-        return result
+        # Fallback: Nur Ortszentrum wenn city vorhanden
+        if city:
+            city_only = f"{city}, Schweiz"
+            city_cache_key = city_only.lower()
+
+            # Cache für Ortszentrum prüfen
+            if city_cache_key in _geocode_cache:
+                logger.debug(f"Fallback auf Ortszentrum (cached): {city}")
+                _geocode_cache[cache_key] = _geocode_cache[city_cache_key]
+                return _geocode_cache[city_cache_key]
+
+            # Ortszentrum geocoden
+            logger.info(f"Adresse nicht gefunden, verwende Ortszentrum: {city}")
+            result = self._geocode_fn(city_only)
+            if result:
+                _geocode_cache[city_cache_key] = result
+                _geocode_cache[cache_key] = result  # Original-Adresse auch cachen
+                return result
+
+        return {}
 
     def _geocode_nominatim(self, address: str) -> dict:
         """Geocoding via OpenStreetMap Nominatim (kostenlos)."""
