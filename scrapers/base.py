@@ -70,6 +70,9 @@ def close_browser():
 class BaseScraper(ABC):
     """Abstrakte Basisklasse für alle Immobilien-Scraper."""
 
+    # Scraper die erweiterte Anti-Bot-Massnahmen benötigen
+    NEEDS_ENHANCED_STEALTH = ['immoscout24', 'newhome']
+
     def __init__(self, config):
         self.config = config
         self.criteria = config.get('search_criteria', {})
@@ -91,8 +94,15 @@ class BaseScraper(ABC):
 
         Erstellt pro Aufruf eine eigene Browser-Instanz, damit es
         threadsicher mit APScheduler funktioniert.
-        Nutzt playwright-stealth um Bot-Erkennung zu umgehen.
         """
+        # Für problematische Seiten erweiterte Methode nutzen
+        if self.get_name() in self.NEEDS_ENHANCED_STEALTH:
+            return self._search_with_enhanced_stealth()
+
+        return self._search_standard()
+
+    def _search_standard(self) -> List[Listing]:
+        """Standard-Suche für normale Seiten (Homegate, Allreal, etc.)."""
         pw = None
         browser = None
         try:
@@ -105,29 +115,121 @@ class BaseScraper(ABC):
                 has_stealth = True
             except ImportError:
                 has_stealth = False
-                logger.debug("playwright-stealth nicht installiert, nutze Standard-Modus")
 
             pw = sync_playwright().start()
 
-            # Zufällige Viewport-Größen für realistischere Fingerprints
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-infobars',
+                    '--window-size=1920,1080',
+                    '--start-maximized',
+                ]
+            )
+
+            context = browser.new_context(
+                locale='de-CH',
+                timezone_id='Europe/Zurich',
+                viewport={'width': 1920, 'height': 1080},
+                user_agent=(
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                    'AppleWebKit/537.36 (KHTML, like Gecko) '
+                    'Chrome/122.0.0.0 Safari/537.36'
+                ),
+                extra_http_headers={
+                    'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                },
+            )
+            page = context.new_page()
+
+            if has_stealth:
+                stealth_sync(page)
+
+            # Einfache JS-Injection
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['de-CH', 'de', 'en']});
+                window.chrome = { runtime: {} };
+            """)
+
+            # Seite laden
+            page.goto(url, wait_until='networkidle', timeout=45000)
+            page.wait_for_timeout(3000)
+
+            # Cookie-Banner wegklicken
+            self._handle_cookie_banner(page)
+
+            # JS-Variablen extrahieren
+            self._extract_js_state(page)
+
+            content = page.content()
+            listings = self.parse_listings(content)
+
+            filtered = self._filter_listings(listings)
+
+            logger.info(
+                f"[{self.get_name()}] {len(listings)} geparst, "
+                f"{len(filtered)} nach Filter"
+            )
+
+            time.sleep(random.uniform(1.0, 2.0))
+
+            context.close()
+            return filtered
+
+        except Exception as e:
+            logger.error(f"[{self.get_name()}] Fehler: {e}")
+            return []
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            if pw:
+                try:
+                    pw.stop()
+                except Exception:
+                    pass
+
+    def _search_with_enhanced_stealth(self) -> List[Listing]:
+        """Erweiterte Suche für Seiten mit starkem Bot-Schutz (ImmoScout24, Newhome)."""
+        pw = None
+        browser = None
+        try:
+            url = self.build_search_url()
+            logger.info(f"[{self.get_name()}] Fetching mit Enhanced Stealth: {url}")
+
+            from playwright.sync_api import sync_playwright
+            try:
+                from playwright_stealth import stealth_sync
+                has_stealth = True
+            except ImportError:
+                has_stealth = False
+                logger.warning("playwright-stealth nicht installiert - Anti-Bot könnte fehlschlagen")
+
+            pw = sync_playwright().start()
+
+            # Zufällige Einstellungen
             viewports = [
                 {'width': 1920, 'height': 1080},
                 {'width': 1536, 'height': 864},
                 {'width': 1440, 'height': 900},
-                {'width': 1366, 'height': 768},
             ]
             viewport = random.choice(viewports)
 
-            # Verschiedene User-Agents
             user_agents = [
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
             ]
             user_agent = random.choice(user_agents)
 
-            # Browser mit zusätzlichen Argumenten für bessere Tarnung
             browser = pw.chromium.launch(
                 headless=True,
                 args=[
@@ -147,7 +249,6 @@ class BaseScraper(ABC):
                 timezone_id='Europe/Zurich',
                 viewport=viewport,
                 user_agent=user_agent,
-                # Zusätzliche Browser-Eigenschaften
                 extra_http_headers={
                     'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -158,149 +259,75 @@ class BaseScraper(ABC):
             )
             page = context.new_page()
 
-            # Stealth-Modus aktivieren (versteckt Automatisierungs-Merkmale)
             if has_stealth:
                 stealth_sync(page)
 
+            # Erweiterte JS-Injection
+            page.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                delete navigator.__proto__.webdriver;
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => {
+                        const plugins = [
+                            {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
+                            {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
+                            {name: 'Native Client', filename: 'internal-nacl-plugin'},
+                        ];
+                        plugins.length = 3;
+                        return plugins;
+                    }
+                });
+                Object.defineProperty(navigator, 'languages', {get: () => ['de-CH', 'de', 'en-US', 'en']});
+                window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+            """)
+
+            # Seite laden mit längerer Timeout
+            page.goto(url, wait_until='networkidle', timeout=60000)
+
+            # Längere initiale Wartezeit
+            page.wait_for_timeout(random.randint(4000, 7000))
+
+            # Menschliches Verhalten simulieren
             try:
-                # Erweiterte JS-Injection für bessere Tarnung
-                page.add_init_script("""
-                    // Webdriver-Erkennung verhindern
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    delete navigator.__proto__.webdriver;
+                page.mouse.move(random.randint(100, 400), random.randint(100, 300))
+                page.wait_for_timeout(random.randint(300, 600))
+                page.mouse.wheel(0, random.randint(150, 350))
+                page.wait_for_timeout(random.randint(500, 1000))
+            except Exception:
+                pass
 
-                    // Plugins simulieren
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => {
-                            const plugins = [
-                                {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
-                                {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
-                                {name: 'Native Client', filename: 'internal-nacl-plugin'},
-                            ];
-                            plugins.length = 3;
-                            return plugins;
-                        }
-                    });
+            # Cookie-Banner
+            self._handle_cookie_banner(page)
 
-                    // Sprachen
-                    Object.defineProperty(navigator, 'languages', {get: () => ['de-CH', 'de', 'en-US', 'en']});
-
-                    // Chrome-Objekt
-                    window.chrome = {
-                        runtime: {},
-                        loadTimes: function() {},
-                        csi: function() {},
-                        app: {}
-                    };
-
-                    // WebGL Vendor/Renderer
-                    const getParameter = WebGLRenderingContext.prototype.getParameter;
-                    WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                        if (parameter === 37445) return 'Intel Inc.';
-                        if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-                        return getParameter.apply(this, arguments);
-                    };
-
-                    // Permissions
-                    const originalQuery = window.navigator.permissions.query;
-                    window.navigator.permissions.query = (parameters) => (
-                        parameters.name === 'notifications' ?
-                            Promise.resolve({ state: Notification.permission }) :
-                            originalQuery(parameters)
-                    );
-                """)
-
-                # Seite laden mit längerer Timeout
-                page.goto(url, wait_until='networkidle', timeout=60000)
-
-                # Variable Wartezeit (menschlicher)
-                page.wait_for_timeout(random.randint(3000, 6000))
-
-                # Simuliere menschliches Verhalten
-                self._simulate_human_behavior(page)
-
-                # Cookie-Banner wegklicken falls vorhanden
-                self._handle_cookie_banner(page)
-
-                # Prüfe ob CAPTCHA/Bot-Schutz angezeigt wird
-                content_check = page.content()
-                bot_detected = any(x in content_check.lower() for x in ['captcha', 'datadome', 'blocked', 'robot'])
-
-                if bot_detected:
-                    logger.warning(f"[{self.get_name()}] Bot-Schutz erkannt - warte und versuche erneut...")
-                    # Längere Wartezeit und mehr menschliches Verhalten
-                    page.wait_for_timeout(random.randint(8000, 15000))
-                    self._simulate_human_behavior(page)
-                    page.wait_for_timeout(random.randint(3000, 5000))
-
-                # Versuche verschiedene JS-Variablen zu extrahieren
-                self._js_initial_state = None
-                self._js_next_data = None
-                self._js_preloaded_state = None
-
-                # Liste von möglichen State-Variablen
-                js_vars = [
-                    ('__INITIAL_STATE__', '_js_initial_state'),
-                    ('__NEXT_DATA__', '_js_next_data'),
-                    ('__PRELOADED_STATE__', '_js_preloaded_state'),
-                    ('__NUXT__', '_js_preloaded_state'),
-                    ('__APP_INITIAL_STATE__', '_js_initial_state'),
-                ]
-                for var_name, attr_name in js_vars:
-                    try:
-                        result = page.evaluate(
-                            f'() => {{ try {{ return JSON.stringify(window.{var_name}); }} catch(e) {{ return null; }} }}'
-                        )
-                        if result and result != 'null' and result != 'undefined':
-                            setattr(self, attr_name, result)
-                            logger.debug(f"[{self.get_name()}] {var_name} gefunden ({len(result)} bytes)")
-                    except Exception:
-                        pass
-
-                # Suche nach window-Properties die 'state', 'data' oder 'props' enthalten
+            # Bot-Schutz prüfen
+            content_check = page.content()
+            if 'captcha' in content_check.lower() or 'datadome' in content_check.lower():
+                logger.warning(f"[{self.get_name()}] Bot-Schutz erkannt - warte...")
+                page.wait_for_timeout(random.randint(10000, 15000))
+                # Nochmal scrollen
                 try:
-                    found_vars = page.evaluate('''() => {
-                        const results = {};
-                        for (const key of Object.keys(window)) {
-                            if (key.includes('STATE') || key.includes('DATA') || key.includes('PROPS')) {
-                                try {
-                                    const val = window[key];
-                                    if (val && typeof val === 'object') {
-                                        results[key] = JSON.stringify(val).substring(0, 50000);
-                                    }
-                                } catch(e) {}
-                            }
-                        }
-                        return results;
-                    }''')
-                    if found_vars:
-                        self._js_window_vars = found_vars
-                        for k in found_vars.keys():
-                            logger.debug(f"[{self.get_name()}] Window-Var gefunden: {k}")
+                    page.mouse.wheel(0, 200)
                 except Exception:
-                    self._js_window_vars = {}
+                    pass
+                page.wait_for_timeout(5000)
 
-                content = page.content()
-                listings = self.parse_listings(content)
+            # JS-Variablen extrahieren
+            self._extract_js_state(page)
 
-                filtered = []
-                for listing in listings:
-                    listing.platform = self.get_name()
-                    if self.meets_criteria(listing):
-                        filtered.append(listing)
+            content = page.content()
+            listings = self.parse_listings(content)
 
-                logger.info(
-                    f"[{self.get_name()}] {len(listings)} geparst, "
-                    f"{len(filtered)} nach Filter"
-                )
+            filtered = self._filter_listings(listings)
 
-                # Rate limiting
-                time.sleep(random.uniform(1.0, 2.5))
+            logger.info(
+                f"[{self.get_name()}] {len(listings)} geparst, "
+                f"{len(filtered)} nach Filter"
+            )
 
-                return filtered
+            time.sleep(random.uniform(2.0, 4.0))
 
-            finally:
-                context.close()
+            context.close()
+            return filtered
 
         except Exception as e:
             logger.error(f"[{self.get_name()}] Fehler: {e}")
@@ -317,26 +344,30 @@ class BaseScraper(ABC):
                 except Exception:
                     pass
 
-    def _simulate_human_behavior(self, page):
-        """Simuliert menschliches Verhalten auf der Seite."""
-        try:
-            # Zufällige Mausbewegungen
-            for _ in range(random.randint(2, 4)):
-                x = random.randint(100, 800)
-                y = random.randint(100, 500)
-                page.mouse.move(x, y, steps=random.randint(5, 15))
-                page.wait_for_timeout(random.randint(100, 300))
+    def _extract_js_state(self, page):
+        """Extrahiert JavaScript State-Variablen von der Seite."""
+        self._js_initial_state = None
+        self._js_next_data = None
+        self._js_preloaded_state = None
+        self._js_window_vars = {}
 
-            # Scrollen
-            scroll_amount = random.randint(200, 500)
-            page.mouse.wheel(0, scroll_amount)
-            page.wait_for_timeout(random.randint(500, 1000))
+        js_vars = [
+            ('__INITIAL_STATE__', '_js_initial_state'),
+            ('__NEXT_DATA__', '_js_next_data'),
+            ('__PRELOADED_STATE__', '_js_preloaded_state'),
+            ('__NUXT__', '_js_preloaded_state'),
+        ]
 
-            # Nochmal nach oben scrollen
-            page.mouse.wheel(0, -random.randint(100, 200))
-            page.wait_for_timeout(random.randint(300, 600))
-        except Exception:
-            pass
+        for var_name, attr_name in js_vars:
+            try:
+                result = page.evaluate(
+                    f'() => {{ try {{ return JSON.stringify(window.{var_name}); }} catch(e) {{ return null; }} }}'
+                )
+                if result and result != 'null' and result != 'undefined':
+                    setattr(self, attr_name, result)
+                    logger.debug(f"[{self.get_name()}] {var_name} gefunden ({len(result)} bytes)")
+            except Exception:
+                pass
 
     def _handle_cookie_banner(self, page):
         """Klickt Cookie-Banner weg falls vorhanden."""
@@ -346,11 +377,8 @@ class BaseScraper(ABC):
             'button:has-text("Alle akzeptieren")',
             'button:has-text("Zustimmen")',
             'button:has-text("OK")',
-            'button:has-text("Einverstanden")',
             '[id*="cookie"] button',
             '[class*="cookie"] button',
-            '[data-testid*="cookie"] button',
-            '.cookie-banner button',
             '#onetrust-accept-btn-handler',
         ]
         for selector in cookie_selectors:
@@ -358,17 +386,22 @@ class BaseScraper(ABC):
                 btn = page.locator(selector).first
                 if btn.is_visible(timeout=500):
                     btn.click()
-                    page.wait_for_timeout(random.randint(300, 700))
+                    page.wait_for_timeout(500)
                     break
             except Exception:
                 continue
 
-    def meets_criteria(self, listing: Listing) -> bool:
-        """Prüft ob ein Inserat die Mindestkriterien erfüllt.
+    def _filter_listings(self, listings: List[Listing]) -> List[Listing]:
+        """Filtert Listings nach Kriterien."""
+        filtered = []
+        for listing in listings:
+            listing.platform = self.get_name()
+            if self.meets_criteria(listing):
+                filtered.append(listing)
+        return filtered
 
-        Bei fehlenden Daten wird das Listing durchgelassen,
-        damit es manuell geprüft werden kann.
-        """
+    def meets_criteria(self, listing: Listing) -> bool:
+        """Prüft ob ein Inserat die Mindestkriterien erfüllt."""
         max_price = self.criteria.get('max_price', 2_200_000)
         min_rooms = self.criteria.get('min_rooms', 4.5)
         min_area = self.criteria.get('min_area_sqm', 120)
@@ -392,7 +425,6 @@ class BaseScraper(ABC):
         cleaned = re.sub(r'[^\d]', '', text)
         if cleaned:
             val = int(cleaned)
-            # Plausibilität: Immobilienpreise in der Schweiz
             if 100_000 <= val <= 50_000_000:
                 return val
         return None
