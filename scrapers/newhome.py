@@ -194,7 +194,6 @@ class NewhomeScraper(BaseScraper):
 
             # Rekursiv weitersuchen
             for v in obj.values():
-            for v in obj.values():
                 result = self._find_listings_recursive(v, depth + 1, max_depth)
                 if result:
                     return result
