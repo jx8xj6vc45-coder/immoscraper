@@ -2,11 +2,16 @@
 
 import sqlite3
 import os
-from flask import Flask, render_template, request
+import threading
+from datetime import datetime, timedelta
+from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'listings.db')
+
+# Status für Scraper-Trigger
+scraper_status = {'running': False, 'last_run': None, 'message': ''}
 
 
 def get_db():
@@ -38,9 +43,18 @@ def index():
     min_price = request.args.get('min_price', '', type=str)
     max_price = request.args.get('max_price', '', type=str)
     min_rooms = request.args.get('min_rooms', '', type=str)
+    only_new = request.args.get('only_new', '')
 
     query = "SELECT * FROM listings WHERE is_active = 1"
     params = []
+
+    # "Neu" = letzte 24 Stunden
+    new_threshold = datetime.now() - timedelta(hours=24)
+    new_threshold_str = new_threshold.strftime('%Y-%m-%d %H:%M:%S')
+
+    if only_new:
+        query += " AND first_seen >= ?"
+        params.append(new_threshold_str)
 
     if grade_filter:
         query += " AND grade = ?"
@@ -72,13 +86,25 @@ def index():
 
     listings = [dict(r) for r in db.execute(query, params).fetchall()]
 
-    # Preise formatieren
+    # Preise formatieren und "Neu"-Flag setzen
     for l in listings:
         l['price_fmt'] = format_price(l.get('price'))
+        # Prüfen ob Listing "neu" ist (letzte 24h)
+        first_seen = l.get('first_seen')
+        if first_seen:
+            try:
+                seen_dt = datetime.strptime(first_seen, '%Y-%m-%d %H:%M:%S')
+                l['is_new'] = seen_dt >= new_threshold
+            except (ValueError, TypeError):
+                l['is_new'] = False
+        else:
+            l['is_new'] = False
 
     # Statistiken
+    new_count = sum(1 for l in listings if l.get('is_new'))
     stats = {
         'total': len(listings),
+        'new_count': new_count,
         'avg_score': 0,
         'platforms': {},
         'grades': {},
@@ -114,7 +140,49 @@ def index():
         min_price=min_price,
         max_price=max_price,
         min_rooms=min_rooms,
+        only_new=only_new,
+        scraper_status=scraper_status,
     )
+
+
+def run_scraper_background():
+    """Führt den Scraper im Hintergrund aus."""
+    global scraper_status
+    try:
+        scraper_status['running'] = True
+        scraper_status['message'] = 'Scraper läuft...'
+
+        # Importiere und starte den Scraper
+        from main import run_search_cycle
+        run_search_cycle('all')
+
+        scraper_status['message'] = 'Scraper abgeschlossen!'
+        scraper_status['last_run'] = datetime.now().strftime('%H:%M:%S')
+    except Exception as e:
+        scraper_status['message'] = f'Fehler: {str(e)}'
+    finally:
+        scraper_status['running'] = False
+
+
+@app.route('/trigger-scraper', methods=['POST'])
+def trigger_scraper():
+    """Startet den Scraper manuell."""
+    global scraper_status
+
+    if scraper_status['running']:
+        return jsonify({'success': False, 'message': 'Scraper läuft bereits'})
+
+    # Starte Scraper in eigenem Thread
+    thread = threading.Thread(target=run_scraper_background, daemon=True)
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Scraper gestartet'})
+
+
+@app.route('/scraper-status')
+def get_scraper_status():
+    """Gibt den aktuellen Scraper-Status zurück."""
+    return jsonify(scraper_status)
 
 
 if __name__ == '__main__':

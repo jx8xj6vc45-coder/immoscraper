@@ -72,6 +72,22 @@
         .listing-tags { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
         .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #f0f0f0; color: #666; }
         .tag-platform { background: #e8f4fd; color: #1976D2; }
+        .tag-new { background: #4CAF50; color: white; font-weight: 600; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+        .btn-scraper { background: #4CAF50; margin-bottom: 16px; }
+        .btn-scraper:hover { background: #43A047; }
+        .btn-scraper:disabled { background: #ccc; cursor: not-allowed; }
+        .scraper-status { font-size: 12px; color: #666; margin-top: 6px; text-align: center; }
+
+        .checkbox-filter { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+        .checkbox-filter input[type="checkbox"] { width: 18px; height: 18px; }
+        .checkbox-filter label { font-size: 14px; cursor: pointer; }
+
+        .new-badge { position: absolute; top: 8px; left: 8px; background: #4CAF50; color: white;
+            font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 4px;
+            text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+        .listing-img { position: relative; }
 
         .listing-score { width: 80px; flex-shrink: 0; text-align: center; display: flex;
             flex-direction: column; justify-content: center; align-items: center; }
@@ -111,6 +127,12 @@
             <div class="stat-value">{{ stats.total }}</div>
             <div class="stat-label">Inserate</div>
         </div>
+        {% if stats.new_count > 0 %}
+        <div class="stat">
+            <div class="stat-value" style="color: #4CAF50;">{{ stats.new_count }}</div>
+            <div class="stat-label">Neu (24h)</div>
+        </div>
+        {% endif %}
         <div class="stat">
             <div class="stat-value">{{ stats.avg_score }}</div>
             <div class="stat-label">&Oslash; Score</div>
@@ -133,8 +155,32 @@
 
     <div class="content">
         <aside class="sidebar">
+            <!-- Scraper Button -->
+            <div class="filter-box" style="margin-bottom: 16px;">
+                <button type="button" id="scraper-btn" class="btn btn-scraper" onclick="triggerScraper()"
+                    {% if scraper_status.running %}disabled{% endif %}>
+                    Scraper starten
+                </button>
+                <div class="scraper-status" id="scraper-status">
+                    {% if scraper_status.running %}
+                        Scraper läuft...
+                    {% elif scraper_status.last_run %}
+                        Letzter Lauf: {{ scraper_status.last_run }}
+                    {% else %}
+                        Bereit
+                    {% endif %}
+                </div>
+            </div>
+
             <form class="filter-box" method="get">
                 <h3>Filter</h3>
+
+                <!-- Nur Neue Checkbox -->
+                <div class="checkbox-filter">
+                    <input type="checkbox" id="only_new" name="only_new" value="1"
+                        {{ 'checked' if only_new }} onchange="this.form.submit()">
+                    <label for="only_new">Nur neue (24h) {% if stats.new_count > 0 %}<strong>({{ stats.new_count }})</strong>{% endif %}</label>
+                </div>
 
                 <div class="filter-group">
                     <label>Sortierung</label>
@@ -204,6 +250,7 @@
                 {% for l in listings %}
                 <div class="listing-card grade-{{ l.grade | replace('+', '-plus') if l.grade else 'none' }}">
                     <div class="listing-img">
+                        {% if l.is_new %}<span class="new-badge">Neu</span>{% endif %}
                         {% if l.image_url %}
                         <img src="{{ l.image_url }}" alt="{{ l.title }}" loading="lazy"
                              onerror="this.parentElement.innerHTML='<div class=no-img>Kein Bild</div>'">
@@ -224,6 +271,7 @@
                         </div>
                         <div class="listing-address">{{ l.address or l.city or '' }}</div>
                         <div class="listing-tags">
+                            {% if l.is_new %}<span class="tag tag-new">NEU</span>{% endif %}
                             <span class="tag tag-platform">{{ l.platform }}</span>
                             {% if l.property_type %}<span class="tag">{{ l.property_type }}</span>{% endif %}
                             {% if l.city %}<span class="tag">{{ l.city }}</span>{% endif %}
@@ -276,5 +324,54 @@
             {% endif %}
         </main>
     </div>
+    <script>
+        function triggerScraper() {
+            const btn = document.getElementById('scraper-btn');
+            const status = document.getElementById('scraper-status');
+
+            btn.disabled = true;
+            btn.textContent = 'Scraper läuft...';
+            status.textContent = 'Starte Scraper...';
+
+            fetch('/trigger-scraper', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    status.textContent = data.message;
+                    if (data.success) {
+                        // Poll für Status-Updates
+                        checkScraperStatus();
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = 'Scraper starten';
+                    }
+                })
+                .catch(err => {
+                    status.textContent = 'Fehler: ' + err;
+                    btn.disabled = false;
+                    btn.textContent = 'Scraper starten';
+                });
+        }
+
+        function checkScraperStatus() {
+            fetch('/scraper-status')
+                .then(r => r.json())
+                .then(data => {
+                    const btn = document.getElementById('scraper-btn');
+                    const status = document.getElementById('scraper-status');
+
+                    status.textContent = data.message || (data.running ? 'Scraper läuft...' : 'Bereit');
+
+                    if (data.running) {
+                        setTimeout(checkScraperStatus, 2000);
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = 'Scraper starten';
+                        if (data.last_run) {
+                            status.textContent = 'Letzter Lauf: ' + data.last_run + ' - Seite neu laden für Ergebnisse';
+                        }
+                    }
+                });
+        }
+    </script>
 </body>
 </html>
