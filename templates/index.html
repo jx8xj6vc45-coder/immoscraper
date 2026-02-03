@@ -306,8 +306,8 @@
                                 <span class="score-bar"><span class="score-bar-fill" style="width:{{ (l.education_score / 25 * 100)|int }}%"></span></span>
                             </span>
                             {% endif %}
-                            {% if l.steuerfuss_score is not none %}
-                            <span class="score-item">Steuer {{ l.steuerfuss_score|int }}/15 {% if l.steuerfuss %}({{ l.steuerfuss }}%){% endif %}
+                            {% if l.get('steuerfuss_score') is not none %}
+                            <span class="score-item">Steuer {{ l.steuerfuss_score|int }}/15 {% if l.get('steuerfuss') %}({{ l.steuerfuss }}%){% endif %}
                                 <span class="score-bar"><span class="score-bar-fill" style="width:{{ (l.steuerfuss_score / 15 * 100)|int }}%"></span></span>
                             </span>
                             {% endif %}
