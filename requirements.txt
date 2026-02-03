@@ -5,6 +5,7 @@ lxml==5.1.0
 
 # Browser-Engine (für JS-gerenderte Websites)
 playwright==1.41.0
+playwright-stealth==1.0.6
 
 # Database
 # sqlite3 is built-in

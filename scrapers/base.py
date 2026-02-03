@@ -89,6 +89,7 @@ class BaseScraper(ABC):
 
         Erstellt pro Aufruf eine eigene Browser-Instanz, damit es
         threadsicher mit APScheduler funktioniert.
+        Nutzt playwright-stealth um Bot-Erkennung zu umgehen.
         """
         pw = None
         browser = None
@@ -97,27 +98,76 @@ class BaseScraper(ABC):
             logger.info(f"[{self.get_name()}] Fetching {url}")
 
             from playwright.sync_api import sync_playwright
+            try:
+                from playwright_stealth import stealth_sync
+                has_stealth = True
+            except ImportError:
+                has_stealth = False
+                logger.debug("playwright-stealth nicht installiert, nutze Standard-Modus")
+
             pw = sync_playwright().start()
-            browser = pw.chromium.launch(headless=True)
+
+            # Browser mit zusätzlichen Argumenten für bessere Tarnung
+            browser = pw.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-infobars',
+                    '--window-size=1920,1080',
+                    '--start-maximized',
+                ]
+            )
 
             context = browser.new_context(
                 locale='de-CH',
                 timezone_id='Europe/Zurich',
                 viewport={'width': 1920, 'height': 1080},
                 user_agent=(
-                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                     'AppleWebKit/537.36 (KHTML, like Gecko) '
-                    'Chrome/121.0.0.0 Safari/537.36'
+                    'Chrome/122.0.0.0 Safari/537.36'
                 ),
+                # Zusätzliche Browser-Eigenschaften
+                extra_http_headers={
+                    'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                },
             )
             page = context.new_page()
 
-            try:
-                # Seite laden und auf Netzwerk-Idle warten
-                page.goto(url, wait_until='networkidle', timeout=30000)
+            # Stealth-Modus aktivieren (versteckt Automatisierungs-Merkmale)
+            if has_stealth:
+                stealth_sync(page)
 
-                # Zusätzliche Wartezeit für JS-Rendering
-                page.wait_for_timeout(3000)
+            try:
+                # Zusätzliche JS-Injection für noch bessere Tarnung
+                page.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                    Object.defineProperty(navigator, 'languages', {get: () => ['de-CH', 'de', 'en']});
+                    window.chrome = { runtime: {} };
+                """)
+
+                # Seite laden und auf Netzwerk-Idle warten
+                page.goto(url, wait_until='networkidle', timeout=45000)
+
+                # Längere Wartezeit für Anti-Bot-Checks
+                page.wait_for_timeout(5000)
+
+                # Simuliere menschliches Verhalten (Mausbewegung, Scrollen)
+                try:
+                    page.mouse.move(random.randint(100, 500), random.randint(100, 400))
+                    page.wait_for_timeout(random.randint(200, 500))
+                    page.mouse.wheel(0, random.randint(100, 300))
+                    page.wait_for_timeout(random.randint(300, 700))
+                except Exception:
+                    pass
 
                 # Cookie-Banner wegklicken falls vorhanden
                 for selector in [
@@ -136,6 +186,15 @@ class BaseScraper(ABC):
                             break
                     except Exception:
                         continue
+
+                # Prüfe ob CAPTCHA/Bot-Schutz angezeigt wird
+                content_check = page.content()
+                if 'captcha' in content_check.lower() or 'datadome' in content_check.lower():
+                    logger.warning(f"[{self.get_name()}] CAPTCHA/Bot-Schutz erkannt - warte und versuche erneut...")
+                    page.wait_for_timeout(10000)  # 10 Sekunden warten
+                    # Nochmal scrollen und warten
+                    page.mouse.wheel(0, 200)
+                    page.wait_for_timeout(5000)
 
                 # Versuche verschiedene JS-Variablen zu extrahieren
                 self._js_initial_state = None
