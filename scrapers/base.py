@@ -199,20 +199,32 @@ class BaseScraper(ABC):
                     pass
 
     def _search_with_enhanced_stealth(self) -> List[Listing]:
-        """Erweiterte Suche für Seiten mit starkem Bot-Schutz (ImmoScout24, Newhome)."""
+        """Erweiterte Suche für Seiten mit starkem Bot-Schutz (ImmoScout24, Newhome).
+
+        Versucht zuerst Patchright (undetected Playwright-Fork), dann normales Playwright.
+        """
         pw = None
         browser = None
         try:
             url = self.build_search_url()
-            logger.info(f"[{self.get_name()}] Fetching mit Enhanced Stealth: {url}")
 
-            from playwright.sync_api import sync_playwright
+            # Versuche Patchright zuerst (umgeht CDP-Erkennung)
+            try:
+                from patchright.sync_api import sync_playwright
+                logger.info(f"[{self.get_name()}] Fetching mit Patchright (undetected): {url}")
+                use_patchright = True
+            except ImportError:
+                from playwright.sync_api import sync_playwright
+                logger.info(f"[{self.get_name()}] Patchright nicht installiert, nutze Playwright: {url}")
+                use_patchright = False
+
             try:
                 from playwright_stealth import stealth_sync
                 has_stealth = True
             except ImportError:
                 has_stealth = False
-                logger.warning("playwright-stealth nicht installiert - Anti-Bot könnte fehlschlagen")
+                if not use_patchright:
+                    logger.warning("Weder Patchright noch playwright-stealth installiert - Anti-Bot wird wahrscheinlich fehlschlagen")
 
             pw = sync_playwright().start()
 
