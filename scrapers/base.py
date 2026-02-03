@@ -201,17 +201,33 @@ class BaseScraper(ABC):
     def _search_with_enhanced_stealth(self) -> List[Listing]:
         """Erweiterte Suche für Seiten mit starkem Bot-Schutz (ImmoScout24, Newhome).
 
-        Versucht zuerst Patchright (undetected Playwright-Fork), dann normales Playwright.
+        Multi-Layer Ansatz für maximale Erfolgsrate:
+        1. Patchright (umgeht CDP-Erkennung)
+        2. Proxy-Unterstützung (Residential/Mobile)
+        3. Bezier-Kurven Mausbewegungen
+        4. Realistische Delays und Verhalten
+        5. Fallback zu curl_cffi bei Fehlschlag
         """
+        url = self.build_search_url()
+
+        # Zuerst Browser-basierte Methode versuchen
+        result = self._try_browser_stealth(url)
+        if result is not None:
+            return result
+
+        # Fallback: curl_cffi mit TLS-Fingerprinting
+        logger.info(f"[{self.get_name()}] Browser fehlgeschlagen, versuche curl_cffi...")
+        return self._try_curl_cffi(url)
+
+    def _try_browser_stealth(self, url: str) -> Optional[List[Listing]]:
+        """Versucht Browser-basiertes Scraping mit Stealth."""
         pw = None
         browser = None
         try:
-            url = self.build_search_url()
-
             # Versuche Patchright zuerst (umgeht CDP-Erkennung)
             try:
                 from patchright.sync_api import sync_playwright
-                logger.info(f"[{self.get_name()}] Fetching mit Patchright (undetected): {url}")
+                logger.info(f"[{self.get_name()}] Fetching mit Patchright: {url}")
                 use_patchright = True
             except ImportError:
                 from playwright.sync_api import sync_playwright
@@ -223,127 +239,220 @@ class BaseScraper(ABC):
                 has_stealth = True
             except ImportError:
                 has_stealth = False
-                if not use_patchright:
-                    logger.warning("Weder Patchright noch playwright-stealth installiert - Anti-Bot wird wahrscheinlich fehlschlagen")
 
             pw = sync_playwright().start()
 
-            # Zufällige Einstellungen
-            viewports = [
-                {'width': 1920, 'height': 1080},
-                {'width': 1536, 'height': 864},
-                {'width': 1440, 'height': 900},
-            ]
-            viewport = random.choice(viewports)
+            # Proxy aus Config laden (falls vorhanden)
+            proxy_config = self.config.get('proxy', None)
+            proxy = None
+            if proxy_config and proxy_config.get('enabled'):
+                proxy = {
+                    'server': proxy_config.get('server'),
+                    'username': proxy_config.get('username'),
+                    'password': proxy_config.get('password'),
+                }
+                logger.info(f"[{self.get_name()}] Nutze Proxy: {proxy_config.get('server')}")
 
-            user_agents = [
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            # Realistische Browser-Konfigurationen
+            configs = [
+                {
+                    'viewport': {'width': 1920, 'height': 1080},
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                    'platform': 'Windows',
+                },
+                {
+                    'viewport': {'width': 1440, 'height': 900},
+                    'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                    'platform': 'macOS',
+                },
+                {
+                    'viewport': {'width': 1536, 'height': 864},
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'platform': 'Windows',
+                },
             ]
-            user_agent = random.choice(user_agents)
+            config = random.choice(configs)
+
+            # Browser starten
+            launch_args = [
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-infobars',
+                f'--window-size={config["viewport"]["width"]},{config["viewport"]["height"]}',
+                '--disable-extensions',
+                '--disable-plugins-discovery',
+                '--disable-default-apps',
+            ]
 
             browser = pw.chromium.launch(
                 headless=True,
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-infobars',
-                    f'--window-size={viewport["width"]},{viewport["height"]}',
-                    '--start-maximized',
-                    '--disable-extensions',
-                ]
+                args=launch_args,
+                proxy=proxy,
             )
 
             context = browser.new_context(
                 locale='de-CH',
                 timezone_id='Europe/Zurich',
-                viewport=viewport,
-                user_agent=user_agent,
+                viewport=config['viewport'],
+                user_agent=config['user_agent'],
                 extra_http_headers={
                     'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                    'sec-ch-ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'sec-ch-ua': '"Chromium";v="123", "Not:A-Brand";v="8", "Google Chrome";v="123"',
                     'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Windows"' if 'Windows' in user_agent else '"macOS"',
+                    'sec-ch-ua-platform': f'"{config["platform"]}"',
+                    'sec-fetch-dest': 'document',
+                    'sec-fetch-mode': 'navigate',
+                    'sec-fetch-site': 'none',
+                    'sec-fetch-user': '?1',
+                    'upgrade-insecure-requests': '1',
                 },
             )
             page = context.new_page()
 
-            if has_stealth:
+            if has_stealth and not use_patchright:
                 stealth_sync(page)
 
-            # Erweiterte JS-Injection
+            # Umfassende JS-Injection für Fingerprint-Maskierung
             page.add_init_script("""
+                // Webdriver verstecken
                 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
                 delete navigator.__proto__.webdriver;
+
+                // Plugins realistisch
                 Object.defineProperty(navigator, 'plugins', {
                     get: () => {
-                        const plugins = [
-                            {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
-                            {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
-                            {name: 'Native Client', filename: 'internal-nacl-plugin'},
+                        const arr = [
+                            {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format'},
+                            {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: ''},
+                            {name: 'Native Client', filename: 'internal-nacl-plugin', description: ''},
                         ];
-                        plugins.length = 3;
-                        return plugins;
+                        arr.item = (i) => arr[i];
+                        arr.namedItem = (n) => arr.find(p => p.name === n);
+                        arr.refresh = () => {};
+                        return arr;
                     }
                 });
+
+                // Languages
                 Object.defineProperty(navigator, 'languages', {get: () => ['de-CH', 'de', 'en-US', 'en']});
-                window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+                Object.defineProperty(navigator, 'language', {get: () => 'de-CH'});
+
+                // Chrome Objekt
+                window.chrome = {
+                    runtime: {
+                        connect: () => {},
+                        sendMessage: () => {},
+                        onMessage: {addListener: () => {}},
+                    },
+                    loadTimes: () => ({
+                        commitLoadTime: Date.now() / 1000 - Math.random() * 2,
+                        connectionInfo: 'http/1.1',
+                        finishDocumentLoadTime: Date.now() / 1000 - Math.random(),
+                        finishLoadTime: Date.now() / 1000 - Math.random() * 0.5,
+                        firstPaintAfterLoadTime: 0,
+                        firstPaintTime: Date.now() / 1000 - Math.random() * 1.5,
+                        navigationType: 'Other',
+                        npnNegotiatedProtocol: 'unknown',
+                        requestTime: Date.now() / 1000 - Math.random() * 3,
+                        startLoadTime: Date.now() / 1000 - Math.random() * 2.5,
+                        wasAlternateProtocolAvailable: false,
+                        wasFetchedViaSpdy: false,
+                        wasNpnNegotiated: false,
+                    }),
+                    csi: () => ({
+                        startE: Date.now() - Math.floor(Math.random() * 3000),
+                        onloadT: Date.now() - Math.floor(Math.random() * 1000),
+                        pageT: Math.random() * 5000,
+                    }),
+                    app: {isInstalled: false, InstallState: {DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed'}, RunningState: {CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running'}},
+                };
+
+                // WebGL Fingerprint
+                const getParameterOrig = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(param) {
+                    if (param === 37445) return 'Intel Inc.';
+                    if (param === 37446) return 'Intel Iris OpenGL Engine';
+                    return getParameterOrig.call(this, param);
+                };
+
+                // Permissions
+                const origQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (params) => (
+                    params.name === 'notifications'
+                        ? Promise.resolve({state: Notification.permission})
+                        : origQuery(params)
+                );
+
+                // Hardware Concurrency
+                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+
+                // Device Memory
+                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+
+                // Connection
+                Object.defineProperty(navigator, 'connection', {
+                    get: () => ({
+                        effectiveType: '4g',
+                        rtt: 50,
+                        downlink: 10,
+                        saveData: false,
+                    })
+                });
             """)
 
-            # Seite laden mit längerer Timeout
-            page.goto(url, wait_until='networkidle', timeout=60000)
+            # Seite laden
+            page.goto(url, wait_until='domcontentloaded', timeout=60000)
 
-            # Längere initiale Wartezeit
-            page.wait_for_timeout(random.randint(4000, 7000))
+            # Realistische initiale Wartezeit
+            time.sleep(random.uniform(2.0, 4.0))
 
-            # Menschliches Verhalten simulieren
-            try:
-                page.mouse.move(random.randint(100, 400), random.randint(100, 300))
-                page.wait_for_timeout(random.randint(300, 600))
-                page.mouse.wheel(0, random.randint(150, 350))
-                page.wait_for_timeout(random.randint(500, 1000))
-            except Exception:
-                pass
+            # Menschliche Mausbewegungen mit Bezier-Kurven
+            self._human_mouse_movement(page)
 
-            # Cookie-Banner
+            # Cookie-Banner behandeln
             self._handle_cookie_banner(page)
 
+            # Warten auf vollständiges Laden
+            page.wait_for_timeout(random.randint(2000, 4000))
+
+            # Mehr menschliches Verhalten
+            self._human_scroll_behavior(page)
+
             # Bot-Schutz prüfen
-            content_check = page.content()
-            if 'captcha' in content_check.lower() or 'datadome' in content_check.lower():
-                logger.warning(f"[{self.get_name()}] Bot-Schutz erkannt - warte...")
-                page.wait_for_timeout(random.randint(10000, 15000))
-                # Nochmal scrollen
-                try:
-                    page.mouse.wheel(0, 200)
-                except Exception:
-                    pass
-                page.wait_for_timeout(5000)
+            content = page.content()
+            if self._is_blocked(content):
+                logger.warning(f"[{self.get_name()}] Bot-Schutz erkannt nach erstem Versuch")
+                # Längere Wartezeit und mehr Interaktion
+                time.sleep(random.uniform(5.0, 10.0))
+                self._human_mouse_movement(page)
+                self._human_scroll_behavior(page)
+                time.sleep(random.uniform(3.0, 5.0))
+                content = page.content()
+
+                if self._is_blocked(content):
+                    logger.error(f"[{self.get_name()}] Bot-Schutz konnte nicht umgangen werden")
+                    context.close()
+                    return None
 
             # JS-Variablen extrahieren
             self._extract_js_state(page)
 
-            content = page.content()
             listings = self.parse_listings(content)
-
             filtered = self._filter_listings(listings)
 
-            logger.info(
-                f"[{self.get_name()}] {len(listings)} geparst, "
-                f"{len(filtered)} nach Filter"
-            )
+            logger.info(f"[{self.get_name()}] {len(listings)} geparst, {len(filtered)} nach Filter")
 
-            time.sleep(random.uniform(2.0, 4.0))
-
+            time.sleep(random.uniform(1.0, 2.0))
             context.close()
             return filtered
 
         except Exception as e:
-            logger.error(f"[{self.get_name()}] Fehler: {e}")
-            return []
+            logger.error(f"[{self.get_name()}] Browser-Fehler: {e}")
+            return None
         finally:
             if browser:
                 try:
@@ -355,6 +464,137 @@ class BaseScraper(ABC):
                     pw.stop()
                 except Exception:
                     pass
+
+    def _try_curl_cffi(self, url: str) -> List[Listing]:
+        """Fallback mit curl_cffi für TLS-Fingerprinting."""
+        try:
+            from curl_cffi import requests as curl_requests
+            logger.info(f"[{self.get_name()}] Versuche curl_cffi mit Chrome TLS-Fingerprint")
+
+            # Chrome-ähnlicher TLS-Fingerprint
+            response = curl_requests.get(
+                url,
+                impersonate='chrome120',
+                headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'sec-ch-ua': '"Chromium";v="120", "Not:A-Brand";v="8", "Google Chrome";v="120"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Windows"',
+                    'sec-fetch-dest': 'document',
+                    'sec-fetch-mode': 'navigate',
+                    'sec-fetch-site': 'none',
+                    'upgrade-insecure-requests': '1',
+                },
+                timeout=30,
+            )
+
+            if response.status_code == 200:
+                content = response.text
+                if not self._is_blocked(content):
+                    listings = self.parse_listings(content)
+                    filtered = self._filter_listings(listings)
+                    logger.info(f"[{self.get_name()}] curl_cffi erfolgreich: {len(filtered)} Listings")
+                    return filtered
+
+            logger.warning(f"[{self.get_name()}] curl_cffi fehlgeschlagen: Status {response.status_code}")
+            return []
+
+        except ImportError:
+            logger.warning(f"[{self.get_name()}] curl_cffi nicht installiert (pip install curl_cffi)")
+            return []
+        except Exception as e:
+            logger.error(f"[{self.get_name()}] curl_cffi Fehler: {e}")
+            return []
+
+    def _is_blocked(self, content: str) -> bool:
+        """Prüft ob Bot-Schutz aktiv ist."""
+        content_lower = content.lower()
+        block_indicators = [
+            'captcha', 'datadome', 'blocked', 'robot', 'unusual traffic',
+            'access denied', 'please verify', 'security check',
+            'are you a robot', 'prove you are human',
+        ]
+        return any(indicator in content_lower for indicator in block_indicators)
+
+    def _human_mouse_movement(self, page):
+        """Simuliert menschliche Mausbewegungen mit Bezier-Kurven."""
+        try:
+            import math
+
+            def bezier_curve(t, p0, p1, p2, p3):
+                """Kubische Bezier-Kurve für natürliche Bewegung."""
+                return (
+                    (1-t)**3 * p0 +
+                    3 * (1-t)**2 * t * p1 +
+                    3 * (1-t) * t**2 * p2 +
+                    t**3 * p3
+                )
+
+            # Startposition
+            start_x, start_y = random.randint(100, 300), random.randint(100, 200)
+            page.mouse.move(start_x, start_y)
+            time.sleep(random.uniform(0.1, 0.3))
+
+            # 2-3 Bewegungen mit Bezier-Kurven
+            for _ in range(random.randint(2, 3)):
+                end_x = random.randint(200, 800)
+                end_y = random.randint(150, 500)
+
+                # Kontrollpunkte für natürliche Kurve
+                cp1_x = start_x + random.randint(-100, 100)
+                cp1_y = start_y + random.randint(-50, 50)
+                cp2_x = end_x + random.randint(-100, 100)
+                cp2_y = end_y + random.randint(-50, 50)
+
+                # Bewegung in Schritten
+                steps = random.randint(15, 30)
+                for i in range(steps + 1):
+                    t = i / steps
+                    # Leichte Variation für natürlichere Bewegung
+                    t_varied = t + random.uniform(-0.02, 0.02)
+                    t_varied = max(0, min(1, t_varied))
+
+                    x = bezier_curve(t_varied, start_x, cp1_x, cp2_x, end_x)
+                    y = bezier_curve(t_varied, start_y, cp1_y, cp2_y, end_y)
+
+                    page.mouse.move(int(x), int(y))
+                    time.sleep(random.uniform(0.01, 0.03))
+
+                start_x, start_y = end_x, end_y
+                time.sleep(random.uniform(0.2, 0.5))
+
+        except Exception:
+            # Fallback zu einfacher Bewegung
+            try:
+                page.mouse.move(random.randint(100, 500), random.randint(100, 400))
+            except Exception:
+                pass
+
+    def _human_scroll_behavior(self, page):
+        """Simuliert menschliches Scroll-Verhalten."""
+        try:
+            # Langsames Scrollen nach unten
+            total_scroll = random.randint(300, 600)
+            scroll_steps = random.randint(3, 6)
+            step_size = total_scroll // scroll_steps
+
+            for _ in range(scroll_steps):
+                # Variable Scroll-Distanz
+                scroll = step_size + random.randint(-30, 30)
+                page.mouse.wheel(0, scroll)
+                time.sleep(random.uniform(0.3, 0.8))
+
+            # Kurze Pause zum "Lesen"
+            time.sleep(random.uniform(1.0, 2.0))
+
+            # Etwas nach oben scrollen (wie ein Mensch der zurückschaut)
+            page.mouse.wheel(0, -random.randint(50, 150))
+            time.sleep(random.uniform(0.5, 1.0))
+
+        except Exception:
+            pass
 
     def _extract_js_state(self, page):
         """Extrahiert JavaScript State-Variablen von der Seite."""
