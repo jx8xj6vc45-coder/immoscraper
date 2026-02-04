@@ -238,37 +238,53 @@ class BaseScraper(ABC):
         """Erweiterte Suche für Seiten mit starkem Bot-Schutz (ImmoScout24, Newhome).
 
         Multi-Layer Ansatz für maximale Erfolgsrate:
-        1. Patchright (umgeht CDP-Erkennung)
-        2. Proxy-Unterstützung (Residential/Mobile)
-        3. Bezier-Kurven Mausbewegungen
-        4. Realistische Delays und Verhalten
-        5. Fallback zu curl_cffi bei Fehlschlag
+        1. Patchright/Chromium (umgeht CDP-Erkennung)
+        2. Firefox als Fallback bei DNS-Problemen
+        3. Proxy-Unterstützung (Residential/Mobile)
+        4. Bezier-Kurven Mausbewegungen
+        5. Realistische Delays und Verhalten
+        6. Fallback zu curl_cffi bei Fehlschlag
         """
         url = self.build_search_url()
 
-        # Zuerst Browser-basierte Methode versuchen
-        result = self._try_browser_stealth(url)
+        # Zuerst Chromium-basierte Methode versuchen
+        result = self._try_browser_stealth(url, use_firefox=False)
         if result is not None:
             return result
 
-        # Fallback: curl_cffi mit TLS-Fingerprinting
+        # Bei DNS-Fehler: Firefox versuchen (anderer DNS-Resolver)
+        logger.info(f"[{self.get_name()}] Chromium fehlgeschlagen, versuche Firefox...")
+        result = self._try_browser_stealth(url, use_firefox=True)
+        if result is not None:
+            return result
+
+        # Letzter Fallback: curl_cffi mit TLS-Fingerprinting
         logger.info(f"[{self.get_name()}] Browser fehlgeschlagen, versuche curl_cffi...")
         return self._try_curl_cffi(url)
 
-    def _try_browser_stealth(self, url: str) -> Optional[List[Listing]]:
-        """Versucht Browser-basiertes Scraping mit Stealth."""
+    def _try_browser_stealth(self, url: str, use_firefox: bool = False) -> Optional[List[Listing]]:
+        """Versucht Browser-basiertes Scraping mit Stealth.
+
+        Args:
+            url: Die zu ladende URL
+            use_firefox: Wenn True, Firefox statt Chromium verwenden (für DNS-Probleme)
+        """
         pw = None
         browser = None
         try:
-            # Versuche Patchright zuerst (umgeht CDP-Erkennung)
-            try:
-                from patchright.sync_api import sync_playwright
-                logger.info(f"[{self.get_name()}] Fetching mit Patchright: {url}")
-                use_patchright = True
-            except ImportError:
+            # Versuche Patchright zuerst (umgeht CDP-Erkennung) - nur für Chromium
+            use_patchright = False
+            if not use_firefox:
+                try:
+                    from patchright.sync_api import sync_playwright
+                    logger.info(f"[{self.get_name()}] Fetching mit Patchright: {url}")
+                    use_patchright = True
+                except ImportError:
+                    from playwright.sync_api import sync_playwright
+                    logger.info(f"[{self.get_name()}] Patchright nicht installiert, nutze Playwright Chromium: {url}")
+            else:
                 from playwright.sync_api import sync_playwright
-                logger.info(f"[{self.get_name()}] Patchright nicht installiert, nutze Playwright: {url}")
-                use_patchright = False
+                logger.info(f"[{self.get_name()}] Nutze Firefox (DNS-Fallback): {url}")
 
             try:
                 from playwright_stealth import stealth_sync
@@ -290,60 +306,89 @@ class BaseScraper(ABC):
                 logger.info(f"[{self.get_name()}] Nutze Proxy: {proxy_config.get('server')}")
 
             # Realistische Browser-Konfigurationen
-            configs = [
-                {
-                    'viewport': {'width': 1920, 'height': 1080},
-                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-                    'platform': 'Windows',
-                },
-                {
-                    'viewport': {'width': 1440, 'height': 900},
-                    'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-                    'platform': 'macOS',
-                },
-                {
-                    'viewport': {'width': 1536, 'height': 864},
-                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                    'platform': 'Windows',
-                },
-            ]
+            if use_firefox:
+                # Firefox User-Agents
+                configs = [
+                    {
+                        'viewport': {'width': 1920, 'height': 1080},
+                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
+                        'platform': 'Windows',
+                    },
+                    {
+                        'viewport': {'width': 1440, 'height': 900},
+                        'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0',
+                        'platform': 'macOS',
+                    },
+                ]
+            else:
+                # Chrome User-Agents
+                configs = [
+                    {
+                        'viewport': {'width': 1920, 'height': 1080},
+                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                        'platform': 'Windows',
+                    },
+                    {
+                        'viewport': {'width': 1440, 'height': 900},
+                        'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                        'platform': 'macOS',
+                    },
+                    {
+                        'viewport': {'width': 1536, 'height': 864},
+                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                        'platform': 'Windows',
+                    },
+                ]
             config = random.choice(configs)
 
             # Browser starten
-            launch_args = [
-                '--disable-blink-features=AutomationControlled',
-                '--disable-dev-shm-usage',
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-infobars',
-                f'--window-size={config["viewport"]["width"]},{config["viewport"]["height"]}',
-                '--disable-extensions',
-                '--disable-plugins-discovery',
-                '--disable-default-apps',
-                # DNS über System statt Chromium's eigenen Resolver
-                '--disable-features=AsyncDns',
-            ]
-
-            # Versuche expliziten Pfad zu finden für Kompatibilität
-            executable_path = self._find_chromium_executable()
-
             launch_kwargs = {
                 'headless': True,
-                'args': launch_args,
                 'proxy': proxy,
             }
-            if executable_path:
-                launch_kwargs['executable_path'] = executable_path
-                logger.debug(f"[{self.get_name()}] Nutze Chromium: {executable_path}")
 
-            browser = pw.chromium.launch(**launch_kwargs)
+            if use_firefox:
+                # Firefox braucht weniger Args
+                browser = pw.firefox.launch(**launch_kwargs)
+            else:
+                # Chromium-spezifische Args
+                launch_args = [
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-infobars',
+                    f'--window-size={config["viewport"]["width"]},{config["viewport"]["height"]}',
+                    '--disable-extensions',
+                    '--disable-plugins-discovery',
+                    '--disable-default-apps',
+                    # DNS über System statt Chromium's eigenen Resolver
+                    '--disable-features=AsyncDns',
+                ]
+                launch_kwargs['args'] = launch_args
 
-            context = browser.new_context(
-                locale='de-CH',
-                timezone_id='Europe/Zurich',
-                viewport=config['viewport'],
-                user_agent=config['user_agent'],
-                extra_http_headers={
+                # Versuche expliziten Pfad zu finden für Kompatibilität
+                executable_path = self._find_chromium_executable()
+                if executable_path:
+                    launch_kwargs['executable_path'] = executable_path
+                    logger.debug(f"[{self.get_name()}] Nutze Chromium: {executable_path}")
+
+                browser = pw.chromium.launch(**launch_kwargs)
+
+            # Browser-spezifische Headers
+            if use_firefox:
+                extra_headers = {
+                    'Accept-Language': 'de-CH,de;q=0.8,en-US;q=0.5,en;q=0.3',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                }
+            else:
+                extra_headers = {
                     'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                     'Accept-Encoding': 'gzip, deflate, br',
@@ -355,15 +400,23 @@ class BaseScraper(ABC):
                     'sec-fetch-site': 'none',
                     'sec-fetch-user': '?1',
                     'upgrade-insecure-requests': '1',
-                },
+                }
+
+            context = browser.new_context(
+                locale='de-CH',
+                timezone_id='Europe/Zurich',
+                viewport=config['viewport'],
+                user_agent=config['user_agent'],
+                extra_http_headers=extra_headers,
             )
             page = context.new_page()
 
-            if has_stealth and not use_patchright:
+            if has_stealth and not use_patchright and not use_firefox:
                 stealth_sync(page)
 
-            # Umfassende JS-Injection für Fingerprint-Maskierung
-            page.add_init_script("""
+            # Umfassende JS-Injection für Fingerprint-Maskierung (nur für Chromium)
+            if not use_firefox:
+                page.add_init_script("""
                 // Webdriver verstecken
                 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
                 delete navigator.__proto__.webdriver;
