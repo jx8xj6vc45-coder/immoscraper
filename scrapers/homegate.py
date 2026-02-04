@@ -83,6 +83,8 @@ class HomegateScraper(BaseScraper):
             logger.debug(f"[homegate] Fetching {url}")
 
             from playwright.sync_api import sync_playwright
+            import platform
+
             try:
                 from playwright_stealth import stealth_sync
                 has_stealth = True
@@ -91,27 +93,33 @@ class HomegateScraper(BaseScraper):
 
             pw = sync_playwright().start()
 
-            # Chromium-Pfad finden für Kompatibilität
-            executable_path = self._find_chromium_executable()
+            # Auf macOS: Firefox nutzen (Chromium hat oft Probleme)
+            use_firefox = platform.system() == 'Darwin'
 
-            launch_args = [
-                '--disable-blink-features=AutomationControlled',
-                '--disable-dev-shm-usage',
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-infobars',
-                '--window-size=1920,1080',
-                '--disable-features=AsyncDns',  # System-DNS verwenden
-            ]
+            if use_firefox:
+                browser = pw.firefox.launch(headless=True)
+            else:
+                # Linux: Chromium mit Optimierungen
+                executable_path = self._find_chromium_executable()
 
-            launch_kwargs = {
-                'headless': True,
-                'args': launch_args,
-            }
-            if executable_path:
-                launch_kwargs['executable_path'] = executable_path
+                launch_args = [
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-infobars',
+                    '--window-size=1920,1080',
+                    '--disable-features=AsyncDns',
+                ]
 
-            browser = pw.chromium.launch(**launch_kwargs)
+                launch_kwargs = {
+                    'headless': True,
+                    'args': launch_args,
+                }
+                if executable_path:
+                    launch_kwargs['executable_path'] = executable_path
+
+                browser = pw.chromium.launch(**launch_kwargs)
 
             context = browser.new_context(
                 locale='de-CH',
