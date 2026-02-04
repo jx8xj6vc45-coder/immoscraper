@@ -284,6 +284,8 @@ class BaseScraper(ABC):
                 '--disable-extensions',
                 '--disable-plugins-discovery',
                 '--disable-default-apps',
+                # DNS über System statt Chromium's eigenen Resolver
+                '--disable-features=AsyncDns',
             ]
 
             browser = pw.chromium.launch(
