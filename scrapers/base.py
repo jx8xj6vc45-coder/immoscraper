@@ -102,29 +102,27 @@ class BaseScraper(ABC):
         return self._search_standard()
 
     def _find_chromium_executable(self) -> Optional[str]:
-        """Findet den Chromium-Executable-Pfad für verschiedene Playwright-Versionen."""
+        """Findet den Chromium-Executable-Pfad für verschiedene Playwright-Versionen.
+
+        Auf macOS: Nutze Playwright's Auto-Detection (stabiler)
+        Auf Linux: Manuelle Suche falls nötig
+        """
         import os
         import glob
         import platform
 
-        # Plattform-spezifische Cache-Verzeichnisse
-        if platform.system() == 'Darwin':  # macOS
-            cache_dirs = [
-                os.path.expanduser('~/Library/Caches/ms-playwright'),
-                os.path.expanduser('~/.cache/ms-playwright'),
-            ]
-            patterns_suffix = [
-                'chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium',
-                'chromium-*/chrome-mac-*/Chromium.app/Contents/MacOS/Chromium',
-            ]
-        else:  # Linux
-            cache_dirs = [
-                os.path.expanduser('~/.cache/ms-playwright'),
-            ]
-            patterns_suffix = [
-                'chromium-*/chrome-linux/chrome',
-                'chromium-*/chrome-*/chrome',
-            ]
+        # Auf macOS: Playwright's Auto-Detection nutzen (stabiler)
+        if platform.system() == 'Darwin':
+            return None
+
+        # Linux: Manuelle Suche falls Playwright Probleme hat
+        cache_dirs = [
+            os.path.expanduser('~/.cache/ms-playwright'),
+        ]
+        patterns_suffix = [
+            'chromium-*/chrome-linux/chrome',
+            'chromium-*/chrome-*/chrome',
+        ]
 
         for cache_dir in cache_dirs:
             if not os.path.exists(cache_dir):
