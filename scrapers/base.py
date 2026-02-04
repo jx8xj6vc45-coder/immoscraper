@@ -660,14 +660,47 @@ class BaseScraper(ABC):
             return []
 
     def _is_blocked(self, content: str) -> bool:
-        """Prüft ob Bot-Schutz aktiv ist."""
+        """Prüft ob Bot-Schutz aktiv ist.
+
+        Verwendet spezifischere Patterns um False Positives zu vermeiden.
+        Normale Seiten können auch 'robot' oder 'datadome' im Footer haben.
+        """
         content_lower = content.lower()
-        block_indicators = [
-            'captcha', 'datadome', 'blocked', 'robot', 'unusual traffic',
-            'access denied', 'please verify', 'security check',
-            'are you a robot', 'prove you are human',
+
+        # Spezifische Block-Phrasen (nicht einzelne Wörter)
+        block_phrases = [
+            'unusual traffic',
+            'access denied',
+            'please verify you are human',
+            'security check required',
+            'are you a robot',
+            'prove you are human',
+            'bitte bestätigen sie',
+            'übermenschlicher geschwindigkeit',  # DataDome deutsch
+            'etwas im verhalten des browsers',  # DataDome deutsch
+            'captcha-container',
+            'challenge-running',
+            'blocked your ip',
         ]
-        return any(indicator in content_lower for indicator in block_indicators)
+
+        if any(phrase in content_lower for phrase in block_phrases):
+            return True
+
+        # DataDome Block-Seite ist sehr klein (< 5KB) und enthält 'datadome'
+        if 'datadome' in content_lower and len(content) < 8000:
+            return True
+
+        # Prüfe ob normale Immobilien-Inhalte vorhanden sind
+        has_listing_content = any(word in content_lower for word in [
+            'inserat', 'listing', 'immobilie', 'wohnung', 'haus',
+            'zimmer', 'chf', 'kaufen', 'mieten', 'property'
+        ])
+
+        # Wenn keine Listing-Inhalte und Seite sehr klein -> wahrscheinlich blockiert
+        if not has_listing_content and len(content) < 3000:
+            return True
+
+        return False
 
     def _human_mouse_movement(self, page):
         """Simuliert menschliche Mausbewegungen mit Bezier-Kurven."""
