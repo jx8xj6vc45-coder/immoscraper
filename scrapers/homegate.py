@@ -77,6 +77,7 @@ class HomegateScraper(BaseScraper):
         """Lädt eine einzelne Seite und gibt die Listings zurück."""
         pw = None
         browser = None
+        context = None
         try:
             url = self.build_search_url(page)
             logger.debug(f"[homegate] Fetching {url}")
@@ -95,6 +96,9 @@ class HomegateScraper(BaseScraper):
                     '--disable-blink-features=AutomationControlled',
                     '--disable-dev-shm-usage',
                     '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-infobars',
+                    '--window-size=1920,1080',
                 ]
             )
 
@@ -107,13 +111,24 @@ class HomegateScraper(BaseScraper):
                     'AppleWebKit/537.36 (KHTML, like Gecko) '
                     'Chrome/122.0.0.0 Safari/537.36'
                 ),
+                extra_http_headers={
+                    'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                },
             )
             page_obj = context.new_page()
 
             if has_stealth:
                 stealth_sync(page_obj)
 
-            page_obj.goto(url, wait_until='networkidle', timeout=45000)
+            # Einfache JS-Injection
+            page_obj.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                window.chrome = { runtime: {} };
+            """)
+
+            # Seite laden
+            page_obj.goto(url, wait_until='networkidle', timeout=60000)
             page_obj.wait_for_timeout(3000)
 
             # JS-State extrahieren
@@ -127,6 +142,14 @@ class HomegateScraper(BaseScraper):
                 self._js_initial_state = None
 
             content = page_obj.content()
+
+            # Context schliessen bevor wir parsen
+            try:
+                context.close()
+                context = None
+            except Exception:
+                pass
+
             listings = self.parse_listings(content)
 
             # Filter anwenden
@@ -136,13 +159,17 @@ class HomegateScraper(BaseScraper):
                 if self.meets_criteria(listing):
                     filtered.append(listing)
 
-            context.close()
             return filtered
 
         except Exception as e:
             logger.error(f"[homegate] Seite {page} Fehler: {e}")
             return []
         finally:
+            if context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
             if browser:
                 try:
                     browser.close()
