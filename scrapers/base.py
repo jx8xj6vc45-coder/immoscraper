@@ -262,14 +262,19 @@ class BaseScraper(ABC):
         """
         url = self.build_search_url()
 
+        # Prüfe ob headless=False gewünscht (für manuelles CAPTCHA-Lösen)
+        use_headless = self.config.get('headless', True)
+        if not use_headless:
+            logger.info(f"[{self.get_name()}] Browser wird sichtbar geöffnet für manuelles CAPTCHA")
+
         # Zuerst Chromium-basierte Methode versuchen
-        result = self._try_browser_stealth(url, use_firefox=False)
+        result = self._try_browser_stealth(url, use_firefox=False, headless=use_headless)
         if result is not None:
             return result
 
         # Bei DNS-Fehler: Firefox versuchen (anderer DNS-Resolver)
         logger.info(f"[{self.get_name()}] Chromium fehlgeschlagen, versuche Firefox...")
-        result = self._try_browser_stealth(url, use_firefox=True)
+        result = self._try_browser_stealth(url, use_firefox=True, headless=use_headless)
         if result is not None:
             return result
 
@@ -277,12 +282,13 @@ class BaseScraper(ABC):
         logger.info(f"[{self.get_name()}] Browser fehlgeschlagen, versuche curl_cffi...")
         return self._try_curl_cffi(url)
 
-    def _try_browser_stealth(self, url: str, use_firefox: bool = False) -> Optional[List[Listing]]:
+    def _try_browser_stealth(self, url: str, use_firefox: bool = False, headless: bool = True) -> Optional[List[Listing]]:
         """Versucht Browser-basiertes Scraping mit Stealth.
 
         Args:
             url: Die zu ladende URL
             use_firefox: Wenn True, Firefox statt Chromium verwenden (für DNS-Probleme)
+            headless: Wenn False, Browser sichtbar öffnen (für manuelles CAPTCHA-Lösen)
         """
         pw = None
         browser = None
@@ -358,7 +364,7 @@ class BaseScraper(ABC):
 
             # Browser starten
             launch_kwargs = {
-                'headless': True,
+                'headless': headless,
                 'proxy': proxy,
             }
 
@@ -540,17 +546,33 @@ class BaseScraper(ABC):
             content = page.content()
             if self._is_blocked(content):
                 logger.warning(f"[{self.get_name()}] Bot-Schutz erkannt nach erstem Versuch")
-                # Längere Wartezeit und mehr Interaktion
-                time.sleep(random.uniform(5.0, 10.0))
-                self._human_mouse_movement(page)
-                self._human_scroll_behavior(page)
-                time.sleep(random.uniform(3.0, 5.0))
-                content = page.content()
 
-                if self._is_blocked(content):
-                    logger.error(f"[{self.get_name()}] Bot-Schutz konnte nicht umgangen werden")
-                    context.close()
-                    return None
+                if not headless:
+                    # Browser ist sichtbar - warte auf manuelles CAPTCHA-Lösen
+                    logger.info(f"[{self.get_name()}] ⏳ Bitte CAPTCHA im Browser lösen... (60 Sekunden Zeit)")
+                    # Warte bis zu 60 Sekunden und prüfe alle 3 Sekunden
+                    for i in range(20):
+                        time.sleep(3)
+                        content = page.content()
+                        if not self._is_blocked(content):
+                            logger.info(f"[{self.get_name()}] ✅ CAPTCHA gelöst!")
+                            break
+                    else:
+                        logger.error(f"[{self.get_name()}] CAPTCHA nicht gelöst nach 60 Sekunden")
+                        context.close()
+                        return None
+                else:
+                    # Headless-Modus: automatische Versuche
+                    time.sleep(random.uniform(5.0, 10.0))
+                    self._human_mouse_movement(page)
+                    self._human_scroll_behavior(page)
+                    time.sleep(random.uniform(3.0, 5.0))
+                    content = page.content()
+
+                    if self._is_blocked(content):
+                        logger.error(f"[{self.get_name()}] Bot-Schutz konnte nicht umgangen werden")
+                        context.close()
+                        return None
 
             # JS-Variablen extrahieren
             self._extract_js_state(page)
