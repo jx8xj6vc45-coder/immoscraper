@@ -105,24 +105,39 @@ class BaseScraper(ABC):
         """Findet den Chromium-Executable-Pfad für verschiedene Playwright-Versionen."""
         import os
         import glob
+        import platform
 
-        cache_dir = os.path.expanduser('~/.cache/ms-playwright')
-        if not os.path.exists(cache_dir):
-            return None
+        # Plattform-spezifische Cache-Verzeichnisse
+        if platform.system() == 'Darwin':  # macOS
+            cache_dirs = [
+                os.path.expanduser('~/Library/Caches/ms-playwright'),
+                os.path.expanduser('~/.cache/ms-playwright'),
+            ]
+            patterns_suffix = [
+                'chromium-*/chrome-mac/Chromium.app/Contents/MacOS/Chromium',
+                'chromium-*/chrome-mac-*/Chromium.app/Contents/MacOS/Chromium',
+            ]
+        else:  # Linux
+            cache_dirs = [
+                os.path.expanduser('~/.cache/ms-playwright'),
+            ]
+            patterns_suffix = [
+                'chromium-*/chrome-linux/chrome',
+                'chromium-*/chrome-*/chrome',
+            ]
 
-        # Suche nach chromium-* Verzeichnissen (nicht headless_shell)
-        patterns = [
-            f'{cache_dir}/chromium-*/chrome-linux/chrome',
-            f'{cache_dir}/chromium-*/chrome-*/chrome',
-        ]
+        for cache_dir in cache_dirs:
+            if not os.path.exists(cache_dir):
+                continue
 
-        for pattern in patterns:
-            matches = glob.glob(pattern)
-            if matches:
-                # Neueste Version nehmen
-                matches.sort(reverse=True)
-                if os.path.isfile(matches[0]) and os.access(matches[0], os.X_OK):
-                    return matches[0]
+            for suffix in patterns_suffix:
+                pattern = f'{cache_dir}/{suffix}'
+                matches = glob.glob(pattern)
+                if matches:
+                    # Neueste Version nehmen
+                    matches.sort(reverse=True)
+                    if os.path.isfile(matches[0]) and os.access(matches[0], os.X_OK):
+                        return matches[0]
 
         return None
 

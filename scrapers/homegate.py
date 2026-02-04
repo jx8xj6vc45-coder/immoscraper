@@ -138,9 +138,10 @@ class HomegateScraper(BaseScraper):
                 window.chrome = { runtime: {} };
             """)
 
-            # Seite laden
-            page_obj.goto(url, wait_until='networkidle', timeout=60000)
-            page_obj.wait_for_timeout(3000)
+            # Seite laden (domcontentloaded ist zuverlässiger als networkidle)
+            page_obj.goto(url, wait_until='domcontentloaded', timeout=60000)
+            # Warten bis dynamischer Content geladen ist
+            page_obj.wait_for_timeout(5000)
 
             # JS-State extrahieren
             try:
