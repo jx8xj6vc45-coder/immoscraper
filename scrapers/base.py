@@ -101,6 +101,31 @@ class BaseScraper(ABC):
 
         return self._search_standard()
 
+    def _find_chromium_executable(self) -> Optional[str]:
+        """Findet den Chromium-Executable-Pfad für verschiedene Playwright-Versionen."""
+        import os
+        import glob
+
+        cache_dir = os.path.expanduser('~/.cache/ms-playwright')
+        if not os.path.exists(cache_dir):
+            return None
+
+        # Suche nach chromium-* Verzeichnissen (nicht headless_shell)
+        patterns = [
+            f'{cache_dir}/chromium-*/chrome-linux/chrome',
+            f'{cache_dir}/chromium-*/chrome-*/chrome',
+        ]
+
+        for pattern in patterns:
+            matches = glob.glob(pattern)
+            if matches:
+                # Neueste Version nehmen
+                matches.sort(reverse=True)
+                if os.path.isfile(matches[0]) and os.access(matches[0], os.X_OK):
+                    return matches[0]
+
+        return None
+
     def _search_standard(self) -> List[Listing]:
         """Standard-Suche für normale Seiten (Homegate, Allreal, etc.)."""
         pw = None
@@ -118,18 +143,29 @@ class BaseScraper(ABC):
 
             pw = sync_playwright().start()
 
-            browser = pw.chromium.launch(
-                headless=True,
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-infobars',
-                    '--window-size=1920,1080',
-                    '--start-maximized',
-                ]
-            )
+            # Versuche expliziten Pfad zu finden für Kompatibilität
+            executable_path = self._find_chromium_executable()
+
+            launch_args = [
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-infobars',
+                '--window-size=1920,1080',
+                '--start-maximized',
+                '--disable-features=AsyncDns',  # System-DNS verwenden
+            ]
+
+            launch_kwargs = {
+                'headless': True,
+                'args': launch_args,
+            }
+            if executable_path:
+                launch_kwargs['executable_path'] = executable_path
+                logger.debug(f"[{self.get_name()}] Nutze Chromium: {executable_path}")
+
+            browser = pw.chromium.launch(**launch_kwargs)
 
             context = browser.new_context(
                 locale='de-CH',
@@ -288,11 +324,19 @@ class BaseScraper(ABC):
                 '--disable-features=AsyncDns',
             ]
 
-            browser = pw.chromium.launch(
-                headless=True,
-                args=launch_args,
-                proxy=proxy,
-            )
+            # Versuche expliziten Pfad zu finden für Kompatibilität
+            executable_path = self._find_chromium_executable()
+
+            launch_kwargs = {
+                'headless': True,
+                'args': launch_args,
+                'proxy': proxy,
+            }
+            if executable_path:
+                launch_kwargs['executable_path'] = executable_path
+                logger.debug(f"[{self.get_name()}] Nutze Chromium: {executable_path}")
+
+            browser = pw.chromium.launch(**launch_kwargs)
 
             context = browser.new_context(
                 locale='de-CH',

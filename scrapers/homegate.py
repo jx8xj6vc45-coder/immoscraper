@@ -90,17 +90,28 @@ class HomegateScraper(BaseScraper):
                 has_stealth = False
 
             pw = sync_playwright().start()
-            browser = pw.chromium.launch(
-                headless=True,
-                args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-infobars',
-                    '--window-size=1920,1080',
-                ]
-            )
+
+            # Chromium-Pfad finden für Kompatibilität
+            executable_path = self._find_chromium_executable()
+
+            launch_args = [
+                '--disable-blink-features=AutomationControlled',
+                '--disable-dev-shm-usage',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-infobars',
+                '--window-size=1920,1080',
+                '--disable-features=AsyncDns',  # System-DNS verwenden
+            ]
+
+            launch_kwargs = {
+                'headless': True,
+                'args': launch_args,
+            }
+            if executable_path:
+                launch_kwargs['executable_path'] = executable_path
+
+            browser = pw.chromium.launch(**launch_kwargs)
 
             context = browser.new_context(
                 locale='de-CH',
