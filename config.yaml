@@ -1,6 +1,6 @@
 # Browser-Einstellungen
 # headless: false = Browser sichtbar öffnen für manuelles CAPTCHA-Lösen
-headless: false
+headless: true
 
 search_criteria:
   max_price: 2200000
