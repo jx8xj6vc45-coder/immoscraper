@@ -29,10 +29,11 @@ class NewhomeScraper(BaseScraper):
         min_rooms_int = int(min_rooms)
         max_price = self.criteria.get('max_price', 2200000)
 
-        # Newhome verwendet andere URL-Struktur mit Query-Parametern
+        # Newhome URL-Struktur (aktualisiert 2024)
+        # Format: /de/kaufen/wohnung-haus/ort/region-kanton-zuerich/
         return (
-            f"{self.BASE_URL}/de/kaufen/immobilien/kanton-zuerich/"
-            f"?rooms={min_rooms_int}&price_to={max_price}"
+            f"{self.BASE_URL}/de/kaufen/wohnung-haus/ort/region-kanton-zuerich/"
+            f"?nof={min_rooms_int}&pt={max_price}"
         )
 
     def get_alternative_urls(self) -> list:
