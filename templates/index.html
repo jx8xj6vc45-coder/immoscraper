@@ -190,6 +190,13 @@
                     <label for="only_new">Nur neue (24h) {% if stats.new_count > 0 %}<strong>({{ stats.new_count }})</strong>{% endif %}</label>
                 </div>
 
+                <!-- Aktuellste 20 Checkbox -->
+                <div class="checkbox-filter">
+                    <input type="checkbox" id="newest_20" name="newest_20" value="1"
+                        {{ 'checked' if newest_20 }} onchange="this.form.submit()">
+                    <label for="newest_20">Aktuellste 20</label>
+                </div>
+
                 <div class="filter-group">
                     <label>Sortierung</label>
                     <select name="sort">
@@ -333,7 +340,7 @@
                 {% if total_pages > 1 %}
                 <div class="pagination">
                     {% if page > 1 %}
-                    <a href="?page={{ page - 1 }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}">&laquo; Zurück</a>
+                    <a href="?page={{ page - 1 }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}">&laquo; Zurück</a>
                     {% else %}
                     <span class="disabled">&laquo; Zurück</span>
                     {% endif %}
@@ -342,14 +349,14 @@
                         {% if p == page %}
                         <span class="current">{{ p }}</span>
                         {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-                        <a href="?page={{ p }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}">{{ p }}</a>
+                        <a href="?page={{ p }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}">{{ p }}</a>
                         {% elif p == page - 3 or p == page + 3 %}
                         <span>...</span>
                         {% endif %}
                     {% endfor %}
 
                     {% if page < total_pages %}
-                    <a href="?page={{ page + 1 }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}">Weiter &raquo;</a>
+                    <a href="?page={{ page + 1 }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}">Weiter &raquo;</a>
                     {% else %}
                     <span class="disabled">Weiter &raquo;</span>
                     {% endif %}

@@ -10,6 +10,7 @@ app = Flask(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'data', 'listings.db')
 ITEMS_PER_PAGE = 20
+MAX_LISTINGS = 200  # Maximum number of listings to keep in view
 
 # Status für Scraper-Trigger
 scraper_status = {'running': False, 'last_run': None, 'message': ''}
@@ -45,11 +46,13 @@ def index():
     max_price = request.args.get('max_price', '', type=str)
     min_rooms = request.args.get('min_rooms', '', type=str)
     only_new = request.args.get('only_new', '')
+    newest_20 = request.args.get('newest_20', '')
     page = request.args.get('page', 1, type=int)
     if page < 1:
         page = 1
 
-    query = "SELECT * FROM listings WHERE is_active = 1"
+    # Show all listings (active and inactive) - no is_active filter
+    query = "SELECT * FROM listings WHERE 1=1"
     params = []
 
     # "Neu" = letzte 24 Stunden
@@ -59,6 +62,9 @@ def index():
     if only_new:
         query += " AND first_seen >= ?"
         params.append(new_threshold_str)
+
+    # "Newest 20" filter - only show most recent 20 entries
+    limit_newest_20 = bool(newest_20)
 
     if grade_filter:
         query += " AND grade = ?"
@@ -87,6 +93,12 @@ def index():
         'rooms': 'rooms DESC',
     }
     query += f" ORDER BY {sort_map.get(sort, 'first_seen DESC')}"
+
+    # Apply limits: newest_20 filter or MAX_LISTINGS
+    if limit_newest_20:
+        query += f" LIMIT 20"
+    else:
+        query += f" LIMIT {MAX_LISTINGS}"
 
     listings = [dict(r) for r in db.execute(query, params).fetchall()]
 
@@ -154,6 +166,7 @@ def index():
         max_price=max_price,
         min_rooms=min_rooms,
         only_new=only_new,
+        newest_20=newest_20,
         scraper_status=scraper_status,
         page=page,
         total_pages=total_pages,
