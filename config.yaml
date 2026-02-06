@@ -53,9 +53,9 @@ scheduling:
 
 scraping:
   # Paralleles Scraping: Anzahl gleichzeitiger Scraper
-  max_parallel_scrapers: 3
+  max_parallel_scrapers: 2
   # Parallel scrapen aktivieren/deaktivieren
-  parallel_enabled: true
+  parallel_enabled: false
 
 apis:
   geocoding: nominatim

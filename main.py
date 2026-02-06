@@ -85,10 +85,12 @@ def run_search_cycle(tier='all', parallel=True):
         scrapers = get_scrapers_for_tier(config, tier)
 
     all_new_listings = []
-    max_workers = config.get('scraping', {}).get('max_parallel_scrapers', 3)
+    scraping_config = config.get('scraping', {})
+    max_workers = scraping_config.get('max_parallel_scrapers', 3)
+    parallel_enabled = scraping_config.get('parallel_enabled', True)
 
-    # Paralleles Scraping
-    if parallel and len(scrapers) > 1:
+    # Paralleles Scraping (nur wenn aktiviert in config)
+    if parallel and parallel_enabled and len(scrapers) > 1:
         logger.info(f"Starte paralleles Scraping mit {min(len(scrapers), max_workers)} Threads...")
         scraper_results = []
 
