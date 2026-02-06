@@ -15,8 +15,52 @@ MAX_LISTINGS = 200  # Maximum number of listings to keep in view
 # Status für Scraper-Trigger
 scraper_status = {'running': False, 'last_run': None, 'message': ''}
 
+# Migration flag
+_db_migrated = False
+
+
+def migrate_db():
+    """Führt Datenbank-Migrationen aus."""
+    global _db_migrated
+    if _db_migrated:
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.execute("PRAGMA table_info(listings)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        # Migration: is_favorite
+        if 'is_favorite' not in columns:
+            conn.execute("ALTER TABLE listings ADD COLUMN is_favorite BOOLEAN DEFAULT 0")
+            print("Migration: is_favorite Spalte hinzugefügt")
+
+        # Migration: duplicate_group_id
+        if 'duplicate_group_id' not in columns:
+            conn.execute("ALTER TABLE listings ADD COLUMN duplicate_group_id TEXT")
+            print("Migration: duplicate_group_id Spalte hinzugefügt")
+
+        # Migration: price_history Tabelle
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                listing_id INTEGER NOT NULL,
+                price INTEGER NOT NULL,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (listing_id) REFERENCES listings(id)
+            )
+        """)
+
+        conn.commit()
+        _db_migrated = True
+    except Exception as e:
+        print(f"Migration Fehler: {e}")
+    finally:
+        conn.close()
+
 
 def get_db():
+    migrate_db()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
