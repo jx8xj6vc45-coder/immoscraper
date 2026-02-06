@@ -3,6 +3,7 @@
 import logging
 import yaml
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -56,7 +57,19 @@ def enrich_listing(listing, geocoder, transport, education):
         listing.gymnasium_nearby = edu_data.get('gymnasium_nearby', False)
 
 
-def run_search_cycle(tier='all'):
+def run_single_scraper(scraper, config):
+    """Führt einen einzelnen Scraper aus und gibt Ergebnisse zurück."""
+    platform_name = scraper.get_name()
+    try:
+        logger.info(f"[{platform_name}] Starte Suche...")
+        listings = scraper.search()
+        return {'platform': platform_name, 'listings': listings, 'error': None}
+    except Exception as e:
+        logger.error(f"[{platform_name}] Fehler: {e}")
+        return {'platform': platform_name, 'listings': [], 'error': str(e)}
+
+
+def run_search_cycle(tier='all', parallel=True):
     """Ein kompletter Such-Durchlauf für ein oder alle Tiers."""
     config = load_config()
     db = Database()
@@ -72,14 +85,34 @@ def run_search_cycle(tier='all'):
         scrapers = get_scrapers_for_tier(config, tier)
 
     all_new_listings = []
+    max_workers = config.get('scraping', {}).get('max_parallel_scrapers', 3)
 
-    for scraper in scrapers:
-        platform_name = scraper.get_name()
-        try:
-            logger.info(f"[{platform_name}] Starte Suche...")
-            listings = scraper.search()
+    # Paralleles Scraping
+    if parallel and len(scrapers) > 1:
+        logger.info(f"Starte paralleles Scraping mit {min(len(scrapers), max_workers)} Threads...")
+        scraper_results = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(run_single_scraper, scraper, config): scraper
+                for scraper in scrapers
+            }
+
+            for future in as_completed(futures):
+                result = future.result()
+                scraper_results.append(result)
+
+        # Ergebnisse sequentiell verarbeiten (DB-Zugriffe nicht parallel)
+        for result in scraper_results:
+            platform_name = result['platform']
+            listings = result['listings']
+            error = result['error']
+
+            if error:
+                db.log_search(platform_name, 0, 0, error)
+                continue
+
             new_count = 0
-
             for listing in listings:
                 # Duplikat-Check
                 listing.listing_hash = generate_listing_hash(listing)
@@ -131,10 +164,70 @@ def run_search_cycle(tier='all'):
                 f"[{platform_name}] {len(listings)} Inserate gefunden, "
                 f"{new_count} neu"
             )
+    else:
+        # Sequentielles Scraping (Fallback)
+        for scraper in scrapers:
+            platform_name = scraper.get_name()
+            try:
+                logger.info(f"[{platform_name}] Starte Suche...")
+                listings = scraper.search()
+                new_count = 0
 
-        except Exception as e:
-            logger.error(f"[{platform_name}] Fehler: {e}")
-            db.log_search(platform_name, 0, 0, str(e))
+                for listing in listings:
+                    # Duplikat-Check
+                    listing.listing_hash = generate_listing_hash(listing)
+
+                    if db.listing_exists(listing.listing_hash):
+                        logger.debug(f"[{platform_name}] Duplikat übersprungen: {listing.title}")
+                        continue
+
+                    if db.listing_exists_by_external_id(listing.external_id, platform_name):
+                        logger.debug(f"[{platform_name}] Bereits bekannt: {listing.external_id}")
+                        continue
+
+                    # Anreicherung mit Geo/Transport/Bildung
+                    try:
+                        enrich_listing(listing, geocoder, transport, education)
+                    except Exception as e:
+                        logger.warning(f"[{platform_name}] Anreicherung fehlgeschlagen: {e}")
+
+                    # ÖV-Filter: >35 Min ausschliessen
+                    max_travel = config.get('search_criteria', {}).get('max_travel_time_minutes', 35)
+                    if listing.travel_time_to_hb and listing.travel_time_to_hb > max_travel:
+                        logger.debug(f"[{platform_name}] ÖV zu weit: {listing.travel_time_to_hb} Min")
+                        continue
+
+                    # Scoring
+                    score_data = scorer.score_listing(listing)
+                    listing.total_score = score_data['total']
+                    listing.location_score = score_data['location']
+                    listing.price_score = score_data['price']
+                    listing.features_score = score_data['features']
+                    listing.transport_score = score_data['transport']
+                    listing.education_score = score_data['education']
+                    listing.steuerfuss_score = score_data['steuerfuss']
+                    listing.grade = score_data['grade']
+
+                    # Speichern
+                    db.save_listing(listing)
+                    all_new_listings.append(listing)
+                    new_count += 1
+
+                    logger.info(
+                        f"  [{listing.grade}] {listing.title} | "
+                        f"{format_price(listing.price)} | "
+                        f"Score: {listing.total_score}/120"
+                    )
+
+                db.log_search(platform_name, len(listings), new_count)
+                logger.info(
+                    f"[{platform_name}] {len(listings)} Inserate gefunden, "
+                    f"{new_count} neu"
+                )
+
+            except Exception as e:
+                logger.error(f"[{platform_name}] Fehler: {e}")
+                db.log_search(platform_name, 0, 0, str(e))
 
     # Benachrichtigungen
     all_new_listings.sort(key=lambda x: x.total_score or 0, reverse=True)

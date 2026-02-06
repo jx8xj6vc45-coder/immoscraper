@@ -47,6 +47,8 @@ def index():
     min_rooms = request.args.get('min_rooms', '', type=str)
     only_new = request.args.get('only_new', '')
     newest_20 = request.args.get('newest_20', '')
+    only_favorites = request.args.get('only_favorites', '')
+    only_duplicates = request.args.get('only_duplicates', '')
     page = request.args.get('page', 1, type=int)
     if page < 1:
         page = 1
@@ -65,6 +67,14 @@ def index():
 
     # "Newest 20" filter - only show most recent 20 entries
     limit_newest_20 = bool(newest_20)
+
+    # Favorites filter
+    if only_favorites:
+        query += " AND is_favorite = 1"
+
+    # Duplicates filter - show only listings with duplicates
+    if only_duplicates:
+        query += " AND listing_hash IN (SELECT listing_hash FROM listings WHERE listing_hash IS NOT NULL GROUP BY listing_hash HAVING COUNT(*) > 1)"
 
     if grade_filter:
         query += " AND grade = ?"
@@ -102,8 +112,23 @@ def index():
 
     listings = [dict(r) for r in db.execute(query, params).fetchall()]
 
+    # Duplikat-Zählung für jedes Listing
+    duplicate_counts = {}
+    dup_rows = db.execute("""
+        SELECT listing_hash, COUNT(*) as cnt FROM listings
+        WHERE listing_hash IS NOT NULL
+        GROUP BY listing_hash HAVING COUNT(*) > 1
+    """).fetchall()
+    for row in dup_rows:
+        duplicate_counts[row['listing_hash']] = row['cnt']
+
+    # Favoriten-Zählung
+    fav_count = db.execute("SELECT COUNT(*) FROM listings WHERE is_favorite = 1").fetchone()[0]
+
     # Preise formatieren und "Neu"-Flag setzen
     for l in listings:
+        # Duplikat-Info hinzufügen
+        l['duplicate_count'] = duplicate_counts.get(l.get('listing_hash'), 0)
         l['price_fmt'] = format_price(l.get('price'))
         # Prüfen ob Listing "neu" ist (letzte 24h)
         first_seen = l.get('first_seen')
@@ -118,9 +143,12 @@ def index():
 
     # Statistiken (vor Pagination berechnen)
     new_count = sum(1 for l in listings if l.get('is_new'))
+    dup_count = sum(1 for l in listings if l.get('duplicate_count', 0) > 1)
     stats = {
         'total': len(listings),
         'new_count': new_count,
+        'fav_count': fav_count,
+        'dup_count': dup_count,
         'avg_score': 0,
         'platforms': {},
         'grades': {},
@@ -167,6 +195,8 @@ def index():
         min_rooms=min_rooms,
         only_new=only_new,
         newest_20=newest_20,
+        only_favorites=only_favorites,
+        only_duplicates=only_duplicates,
         scraper_status=scraper_status,
         page=page,
         total_pages=total_pages,
@@ -212,6 +242,72 @@ def trigger_scraper():
 def get_scraper_status():
     """Gibt den aktuellen Scraper-Status zurück."""
     return jsonify(scraper_status)
+
+
+@app.route('/toggle-favorite/<int:listing_id>', methods=['POST'])
+def toggle_favorite(listing_id):
+    """Toggle Favoriten-Status eines Listings."""
+    db = get_db()
+    try:
+        current = db.execute(
+            "SELECT is_favorite FROM listings WHERE id = ?", (listing_id,)
+        ).fetchone()
+        if current:
+            new_status = 0 if current['is_favorite'] else 1
+            db.execute(
+                "UPDATE listings SET is_favorite = ? WHERE id = ?",
+                (new_status, listing_id)
+            )
+            db.commit()
+            return jsonify({'success': True, 'is_favorite': new_status == 1})
+        return jsonify({'success': False, 'message': 'Listing nicht gefunden'})
+    finally:
+        db.close()
+
+
+@app.route('/price-history/<int:listing_id>')
+def price_history(listing_id):
+    """Gibt Preishistorie eines Listings zurück."""
+    db = get_db()
+    try:
+        rows = db.execute("""
+            SELECT price, recorded_at FROM price_history
+            WHERE listing_id = ? ORDER BY recorded_at ASC
+        """, (listing_id,)).fetchall()
+        history = [{'price': format_price(r['price']), 'price_raw': r['price'],
+                   'date': r['recorded_at']} for r in rows]
+        return jsonify({'success': True, 'history': history})
+    finally:
+        db.close()
+
+
+@app.route('/duplicates/<int:listing_id>')
+def get_duplicates(listing_id):
+    """Gibt Duplikate eines Listings zurück."""
+    db = get_db()
+    try:
+        listing = db.execute(
+            "SELECT listing_hash FROM listings WHERE id = ?", (listing_id,)
+        ).fetchone()
+        if not listing or not listing['listing_hash']:
+            return jsonify({'success': False, 'message': 'Kein Hash'})
+
+        rows = db.execute("""
+            SELECT id, platform, url, price, first_seen FROM listings
+            WHERE listing_hash = ? AND id != ?
+            ORDER BY first_seen ASC
+        """, (listing['listing_hash'], listing_id)).fetchall()
+
+        duplicates = [{
+            'id': r['id'],
+            'platform': r['platform'],
+            'url': r['url'],
+            'price': format_price(r['price']),
+            'first_seen': r['first_seen']
+        } for r in rows]
+        return jsonify({'success': True, 'duplicates': duplicates})
+    finally:
+        db.close()
 
 
 if __name__ == '__main__':

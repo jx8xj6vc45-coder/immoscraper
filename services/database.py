@@ -65,6 +65,10 @@ CREATE TABLE IF NOT EXISTS listings (
     is_active BOOLEAN DEFAULT 1,
     notified BOOLEAN DEFAULT 0,
 
+    -- Favoriten & Duplikate
+    is_favorite BOOLEAN DEFAULT 0,
+    duplicate_group_id TEXT,
+
     UNIQUE(external_id, platform)
 );
 
@@ -73,6 +77,19 @@ CREATE INDEX IF NOT EXISTS idx_external_id_platform ON listings(external_id, pla
 CREATE INDEX IF NOT EXISTS idx_total_score ON listings(total_score DESC);
 CREATE INDEX IF NOT EXISTS idx_notified ON listings(notified);
 CREATE INDEX IF NOT EXISTS idx_first_seen ON listings(first_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_favorite ON listings(is_favorite);
+CREATE INDEX IF NOT EXISTS idx_duplicate_group ON listings(duplicate_group_id);
+
+-- Preis-Historie
+CREATE TABLE IF NOT EXISTS price_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL,
+    price INTEGER NOT NULL,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (listing_id) REFERENCES listings(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_history_listing ON price_history(listing_id);
 
 CREATE TABLE IF NOT EXISTS search_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,6 +120,8 @@ class Database:
             conn.executescript(SCHEMA)
             # Migration: Add steuerfuss columns if missing
             self._migrate_add_steuerfuss(conn)
+            # Migration: Add favorites and duplicates columns
+            self._migrate_add_favorites_duplicates(conn)
 
     def _migrate_add_steuerfuss(self, conn):
         """Fügt steuerfuss Spalten hinzu falls nicht vorhanden."""
@@ -115,6 +134,18 @@ class Database:
                 conn.execute("ALTER TABLE listings ADD COLUMN steuerfuss INTEGER")
         except Exception as e:
             logger.warning(f"Steuerfuss Migration Fehler: {e}")
+
+    def _migrate_add_favorites_duplicates(self, conn):
+        """Fügt Favoriten und Duplikate Spalten hinzu falls nicht vorhanden."""
+        try:
+            cursor = conn.execute("PRAGMA table_info(listings)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'is_favorite' not in columns:
+                conn.execute("ALTER TABLE listings ADD COLUMN is_favorite BOOLEAN DEFAULT 0")
+            if 'duplicate_group_id' not in columns:
+                conn.execute("ALTER TABLE listings ADD COLUMN duplicate_group_id TEXT")
+        except Exception as e:
+            logger.warning(f"Favorites/Duplicates Migration Fehler: {e}")
 
     def listing_exists(self, listing_hash):
         """Prüft ob ein Listing (per Hash) bereits existiert."""
@@ -137,7 +168,25 @@ class Database:
     def save_listing(self, listing):
         """Speichert ein neues Listing in der Datenbank."""
         with self._get_conn() as conn:
-            conn.execute("""
+            # Duplikat-Gruppe finden wenn gleicher Hash existiert
+            duplicate_group = None
+            if listing.listing_hash:
+                existing = conn.execute(
+                    "SELECT duplicate_group_id FROM listings WHERE listing_hash = ? LIMIT 1",
+                    (listing.listing_hash,)
+                ).fetchone()
+                if existing:
+                    duplicate_group = existing['duplicate_group_id']
+                    if not duplicate_group:
+                        import uuid
+                        duplicate_group = str(uuid.uuid4())[:8]
+                        # Update existing listing with group ID
+                        conn.execute(
+                            "UPDATE listings SET duplicate_group_id = ? WHERE listing_hash = ?",
+                            (duplicate_group, listing.listing_hash)
+                        )
+
+            cursor = conn.execute("""
                 INSERT OR IGNORE INTO listings (
                     external_id, listing_hash, platform,
                     title, description, price, rooms, area_sqm, address, city,
@@ -149,10 +198,10 @@ class Database:
                     transport_score, education_score, steuerfuss_score, steuerfuss, grade,
                     maturitaetsquote, nearest_school_distance,
                     gymnasium_nearby, nearby_schools_json,
-                    travel_time_to_hb
+                    travel_time_to_hb, duplicate_group_id
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
             """, (
                 listing.external_id, listing.listing_hash, listing.platform,
@@ -171,8 +220,16 @@ class Database:
                 listing.maturitaetsquote, listing.nearest_school_distance,
                 listing.gymnasium_nearby,
                 json.dumps(listing.nearby_schools) if listing.nearby_schools else None,
-                listing.travel_time_to_hb,
+                listing.travel_time_to_hb, duplicate_group,
             ))
+
+            # Preis in Historie speichern wenn neues Listing
+            if cursor.rowcount > 0 and listing.price:
+                listing_id = cursor.lastrowid
+                conn.execute(
+                    "INSERT INTO price_history (listing_id, price) VALUES (?, ?)",
+                    (listing_id, listing.price)
+                )
 
     def update_scores(self, listing_id, scores):
         """Aktualisiert Scores eines Listings."""
@@ -250,3 +307,142 @@ class Database:
                 'avg_score': round(avg_score, 1) if avg_score else 0,
                 'by_grade': {r['grade']: r['cnt'] for r in by_grade},
             }
+
+    # === Favoriten ===
+
+    def toggle_favorite(self, listing_id):
+        """Toggle Favoriten-Status eines Listings."""
+        with self._get_conn() as conn:
+            current = conn.execute(
+                "SELECT is_favorite FROM listings WHERE id = ?", (listing_id,)
+            ).fetchone()
+            if current:
+                new_status = 0 if current['is_favorite'] else 1
+                conn.execute(
+                    "UPDATE listings SET is_favorite = ? WHERE id = ?",
+                    (new_status, listing_id)
+                )
+                return new_status == 1
+        return False
+
+    def get_favorites(self):
+        """Gibt alle Favoriten zurück."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM listings WHERE is_favorite = 1 ORDER BY first_seen DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    # === Preis-Historie ===
+
+    def record_price(self, listing_id, price):
+        """Speichert Preis in Historie wenn geändert."""
+        if not price:
+            return
+        with self._get_conn() as conn:
+            # Letzten Preis prüfen
+            last = conn.execute("""
+                SELECT price FROM price_history
+                WHERE listing_id = ? ORDER BY recorded_at DESC LIMIT 1
+            """, (listing_id,)).fetchone()
+
+            # Nur speichern wenn Preis anders oder erster Eintrag
+            if not last or last['price'] != price:
+                conn.execute(
+                    "INSERT INTO price_history (listing_id, price) VALUES (?, ?)",
+                    (listing_id, price)
+                )
+
+    def get_price_history(self, listing_id):
+        """Gibt Preishistorie eines Listings zurück."""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT price, recorded_at FROM price_history
+                WHERE listing_id = ? ORDER BY recorded_at ASC
+            """, (listing_id,)).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_listings_with_price_changes(self):
+        """Gibt Listings mit Preisänderungen zurück."""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT l.*,
+                    (SELECT MIN(price) FROM price_history WHERE listing_id = l.id) as min_price,
+                    (SELECT MAX(price) FROM price_history WHERE listing_id = l.id) as max_price,
+                    (SELECT COUNT(*) FROM price_history WHERE listing_id = l.id) as price_change_count
+                FROM listings l
+                WHERE l.id IN (
+                    SELECT listing_id FROM price_history
+                    GROUP BY listing_id HAVING COUNT(*) > 1
+                )
+                ORDER BY l.first_seen DESC
+            """).fetchall()
+            return [dict(r) for r in rows]
+
+    # === Duplikate ===
+
+    def find_duplicates_by_hash(self, listing_hash):
+        """Findet alle Listings mit gleichem Hash (Duplikate)."""
+        if not listing_hash:
+            return []
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT * FROM listings WHERE listing_hash = ? ORDER BY first_seen ASC",
+                (listing_hash,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def mark_duplicate_group(self, listing_ids, group_id=None):
+        """Markiert Listings als Duplikat-Gruppe."""
+        if not listing_ids:
+            return
+        import uuid
+        group_id = group_id or str(uuid.uuid4())[:8]
+        with self._get_conn() as conn:
+            placeholders = ','.join('?' for _ in listing_ids)
+            conn.execute(
+                f"UPDATE listings SET duplicate_group_id = ? WHERE id IN ({placeholders})",
+                [group_id] + list(listing_ids)
+            )
+        return group_id
+
+    def get_duplicates(self):
+        """Gibt alle Duplikat-Gruppen zurück."""
+        with self._get_conn() as conn:
+            rows = conn.execute("""
+                SELECT l.*,
+                    (SELECT COUNT(*) FROM listings WHERE listing_hash = l.listing_hash) as duplicate_count
+                FROM listings l
+                WHERE l.listing_hash IN (
+                    SELECT listing_hash FROM listings
+                    WHERE listing_hash IS NOT NULL
+                    GROUP BY listing_hash HAVING COUNT(*) > 1
+                )
+                ORDER BY l.listing_hash, l.first_seen ASC
+            """).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_listing_by_id(self, listing_id):
+        """Gibt ein einzelnes Listing zurück."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM listings WHERE id = ?", (listing_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_listing_price(self, listing_id, new_price):
+        """Aktualisiert Preis und speichert in Historie."""
+        with self._get_conn() as conn:
+            # Aktuellen Preis holen
+            current = conn.execute(
+                "SELECT price FROM listings WHERE id = ?", (listing_id,)
+            ).fetchone()
+
+            if current and current['price'] != new_price:
+                # Preis in Historie speichern
+                self.record_price(listing_id, new_price)
+                # Listing aktualisieren
+                conn.execute(
+                    "UPDATE listings SET price = ?, last_checked = CURRENT_TIMESTAMP WHERE id = ?",
+                    (new_price, listing_id)
+                )

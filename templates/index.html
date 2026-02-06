@@ -73,7 +73,17 @@
         .tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #f0f0f0; color: #666; }
         .tag-platform { background: #e8f4fd; color: #1976D2; }
         .tag-new { background: #4CAF50; color: white; font-weight: 600; animation: pulse 2s infinite; }
+        .tag-favorite { background: #FF5722; color: white; }
+        .tag-duplicate { background: #9C27B0; color: white; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+        .favorite-btn { background: none; border: none; cursor: pointer; font-size: 20px; padding: 4px; }
+        .favorite-btn:hover { transform: scale(1.1); }
+        .favorite-btn.active { color: #FF5722; }
+        .listing-actions { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+        .action-btn { font-size: 11px; padding: 4px 8px; border-radius: 4px; border: 1px solid #ddd;
+            background: white; cursor: pointer; color: #666; }
+        .action-btn:hover { background: #f5f5f5; }
 
         .btn-scraper { background: #4CAF50; margin-bottom: 16px; }
         .btn-scraper:hover { background: #43A047; }
@@ -197,6 +207,20 @@
                     <label for="newest_20">Aktuellste 20</label>
                 </div>
 
+                <!-- Favoriten Checkbox -->
+                <div class="checkbox-filter">
+                    <input type="checkbox" id="only_favorites" name="only_favorites" value="1"
+                        {{ 'checked' if only_favorites }} onchange="this.form.submit()">
+                    <label for="only_favorites">Favoriten {% if stats.fav_count > 0 %}<strong>({{ stats.fav_count }})</strong>{% endif %}</label>
+                </div>
+
+                <!-- Duplikate Checkbox -->
+                <div class="checkbox-filter">
+                    <input type="checkbox" id="only_duplicates" name="only_duplicates" value="1"
+                        {{ 'checked' if only_duplicates }} onchange="this.form.submit()">
+                    <label for="only_duplicates">Mit Duplikaten {% if stats.dup_count > 0 %}<strong>({{ stats.dup_count }})</strong>{% endif %}</label>
+                </div>
+
                 <div class="filter-group">
                     <label>Sortierung</label>
                     <select name="sort">
@@ -287,9 +311,19 @@
                         <div class="listing-address">{{ l.address or l.city or '' }}</div>
                         <div class="listing-tags">
                             {% if l.is_new %}<span class="tag tag-new">NEU</span>{% endif %}
+                            {% if l.is_favorite %}<span class="tag tag-favorite">Favorit</span>{% endif %}
+                            {% if l.duplicate_count > 1 %}<span class="tag tag-duplicate">{{ l.duplicate_count }}x Duplikat</span>{% endif %}
                             <span class="tag tag-platform">{{ l.platform }}</span>
                             {% if l.property_type %}<span class="tag">{{ l.property_type }}</span>{% endif %}
                             {% if l.city %}<span class="tag">{{ l.city }}</span>{% endif %}
+                        </div>
+                        <div class="listing-actions">
+                            <button class="favorite-btn {{ 'active' if l.is_favorite }}" onclick="toggleFavorite({{ l.id }}, this)" title="Favorit">
+                                {{ '★' if l.is_favorite else '☆' }}
+                            </button>
+                            {% if l.duplicate_count > 1 %}
+                            <button class="action-btn" onclick="showDuplicates({{ l.id }})" title="Duplikate anzeigen">Duplikate</button>
+                            {% endif %}
                         </div>
                         {% if l.total_score %}
                         <div class="score-breakdown">
@@ -340,7 +374,7 @@
                 {% if total_pages > 1 %}
                 <div class="pagination">
                     {% if page > 1 %}
-                    <a href="?page={{ page - 1 }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}">&laquo; Zurück</a>
+                    <a href="?page={{ page - 1 }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}{% if only_favorites %}&only_favorites=1{% endif %}{% if only_duplicates %}&only_duplicates=1{% endif %}">&laquo; Zurück</a>
                     {% else %}
                     <span class="disabled">&laquo; Zurück</span>
                     {% endif %}
@@ -349,14 +383,14 @@
                         {% if p == page %}
                         <span class="current">{{ p }}</span>
                         {% elif p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-                        <a href="?page={{ p }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}">{{ p }}</a>
+                        <a href="?page={{ p }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}{% if only_favorites %}&only_favorites=1{% endif %}{% if only_duplicates %}&only_duplicates=1{% endif %}">{{ p }}</a>
                         {% elif p == page - 3 or p == page + 3 %}
                         <span>...</span>
                         {% endif %}
                     {% endfor %}
 
                     {% if page < total_pages %}
-                    <a href="?page={{ page + 1 }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}">Weiter &raquo;</a>
+                    <a href="?page={{ page + 1 }}&sort={{ sort }}&grade={{ grade_filter }}&city={{ city_filter }}&platform={{ platform_filter }}&min_price={{ min_price }}&max_price={{ max_price }}&min_rooms={{ min_rooms }}{% if only_new %}&only_new=1{% endif %}{% if newest_20 %}&newest_20=1{% endif %}{% if only_favorites %}&only_favorites=1{% endif %}{% if only_duplicates %}&only_duplicates=1{% endif %}">Weiter &raquo;</a>
                     {% else %}
                     <span class="disabled">Weiter &raquo;</span>
                     {% endif %}
@@ -420,6 +454,45 @@
                         if (data.last_run) {
                             status.textContent = 'Letzter Lauf: ' + data.last_run + ' - Seite neu laden für Ergebnisse';
                         }
+                    }
+                });
+        }
+
+        function toggleFavorite(listingId, btn) {
+            fetch('/toggle-favorite/' + listingId, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        btn.classList.toggle('active', data.is_favorite);
+                        btn.textContent = data.is_favorite ? '★' : '☆';
+                        // Update tag
+                        const card = btn.closest('.listing-card');
+                        const tags = card.querySelector('.listing-tags');
+                        let favTag = tags.querySelector('.tag-favorite');
+                        if (data.is_favorite && !favTag) {
+                            favTag = document.createElement('span');
+                            favTag.className = 'tag tag-favorite';
+                            favTag.textContent = 'Favorit';
+                            tags.insertBefore(favTag, tags.firstChild);
+                        } else if (!data.is_favorite && favTag) {
+                            favTag.remove();
+                        }
+                    }
+                });
+        }
+
+        function showDuplicates(listingId) {
+            fetch('/duplicates/' + listingId)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success && data.duplicates.length > 0) {
+                        let msg = 'Gefunden auf anderen Plattformen:\n\n';
+                        data.duplicates.forEach(d => {
+                            msg += `• ${d.platform}: ${d.price} (${d.first_seen})\n`;
+                        });
+                        alert(msg);
+                    } else {
+                        alert('Keine Duplikate gefunden.');
                     }
                 });
         }

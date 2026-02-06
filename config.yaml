@@ -24,22 +24,20 @@ search_criteria:
 
 platforms:
   tier1:
-    # immoscout24 wieder aktiviert mit verbesserten Anti-Bot-Massnahmen
+    # Haupt-Plattformen mit besten Daten
     - immoscout24
     - homegate
     - allreal
     - mobimo
   tier2:
-    # newhome wieder aktiviert mit verbessertem Parsing
+    # Sekundäre Plattformen
     - newhome
     - comparis
     - flatfox
-    - urbanhome
-    - neho
   tier3:
-    - icasa
-    - engelvoelkers
-    - betterhomes
+    # Spezialisierte und kleinere Plattformen
+    - neubauprojekte
+    - immostreet
 
 notifications:
   email:
@@ -52,6 +50,12 @@ scheduling:
   tier1_interval_minutes: 15
   tier2_interval_minutes: 60
   tier3_interval_minutes: 360
+
+scraping:
+  # Paralleles Scraping: Anzahl gleichzeitiger Scraper
+  max_parallel_scrapers: 3
+  # Parallel scrapen aktivieren/deaktivieren
+  parallel_enabled: true
 
 apis:
   geocoding: nominatim

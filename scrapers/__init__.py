@@ -3,6 +3,10 @@ from scrapers.homegate import HomegateScraper
 from scrapers.newhome import NewhomeScraper
 from scrapers.allreal import AllrealScraper
 from scrapers.mobimo import MobimoScraper
+from scrapers.comparis import ComparisScraper
+from scrapers.flatfox import FlatfoxScraper
+from scrapers.neubauprojekte import NeubauprojekteScraper
+from scrapers.immostreet import ImmoStreetScraper
 
 
 SCRAPER_REGISTRY = {
@@ -11,6 +15,10 @@ SCRAPER_REGISTRY = {
     'newhome': NewhomeScraper,
     'allreal': AllrealScraper,
     'mobimo': MobimoScraper,
+    'comparis': ComparisScraper,
+    'flatfox': FlatfoxScraper,
+    'neubauprojekte': NeubauprojekteScraper,
+    'immostreet': ImmoStreetScraper,
 }
 
 
