@@ -15,6 +15,9 @@ MAX_LISTINGS = 200  # Maximum number of listings to keep in view
 # Status für Scraper-Trigger
 scraper_status = {'running': False, 'last_run': None, 'message': ''}
 
+# Status pro Plattform: {'platform': {'success': bool, 'count': int, 'error': str, 'timestamp': str}}
+platform_status = {}
+
 # Migration flag
 _db_migrated = False
 
@@ -242,6 +245,7 @@ def index():
         only_favorites=only_favorites,
         only_duplicates=only_duplicates,
         scraper_status=scraper_status,
+        platform_status=platform_status,
         page=page,
         total_pages=total_pages,
         total_items=total_items,
@@ -250,14 +254,23 @@ def index():
 
 def run_scraper_background():
     """Führt den Scraper im Hintergrund aus."""
-    global scraper_status
+    global scraper_status, platform_status
     try:
         scraper_status['running'] = True
         scraper_status['message'] = 'Scraper läuft...'
 
         # Importiere und starte den Scraper
         from main import run_search_cycle
-        run_search_cycle('all')
+        results = run_search_cycle('all')
+
+        # Platform-Status aktualisieren
+        if results:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            for platform, data in results.items():
+                platform_status[platform] = {
+                    **data,
+                    'timestamp': timestamp,
+                }
 
         scraper_status['message'] = 'Scraper abgeschlossen!'
         scraper_status['last_run'] = datetime.now().strftime('%H:%M:%S')
@@ -286,6 +299,12 @@ def trigger_scraper():
 def get_scraper_status():
     """Gibt den aktuellen Scraper-Status zurück."""
     return jsonify(scraper_status)
+
+
+@app.route('/platform-status')
+def get_platform_status():
+    """Gibt Status aller Plattformen zurück."""
+    return jsonify(platform_status)
 
 
 @app.route('/toggle-favorite/<int:listing_id>', methods=['POST'])

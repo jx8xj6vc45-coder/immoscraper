@@ -70,7 +70,11 @@ def run_single_scraper(scraper, config):
 
 
 def run_search_cycle(tier='all', parallel=True):
-    """Ein kompletter Such-Durchlauf für ein oder alle Tiers."""
+    """Ein kompletter Such-Durchlauf für ein oder alle Tiers.
+
+    Returns:
+        dict: Platform status mit success/error pro Plattform
+    """
     config = load_config()
     db = Database()
     geocoder = GeocodingService(config)
@@ -85,6 +89,7 @@ def run_search_cycle(tier='all', parallel=True):
         scrapers = get_scrapers_for_tier(config, tier)
 
     all_new_listings = []
+    platform_results = {}  # Track results per platform
     scraping_config = config.get('scraping', {})
     max_workers = scraping_config.get('max_parallel_scrapers', 3)
     parallel_enabled = scraping_config.get('parallel_enabled', True)
@@ -112,6 +117,11 @@ def run_search_cycle(tier='all', parallel=True):
 
             if error:
                 db.log_search(platform_name, 0, 0, error)
+                platform_results[platform_name] = {
+                    'success': False,
+                    'count': 0,
+                    'error': error,
+                }
                 continue
 
             new_count = 0
@@ -162,6 +172,19 @@ def run_search_cycle(tier='all', parallel=True):
                 )
 
             db.log_search(platform_name, len(listings), new_count)
+            platform_results[platform_name] = {
+                'success': True,
+                'count': len(listings),
+                'new': new_count,
+                'error': None,
+            }
+
+            # Nur bei erfolgreichem Scraping: Alte Inserate deaktivieren
+            # (die nicht mehr auf der Plattform sind)
+            if len(listings) > 0:
+                active_ids = [l.external_id for l in listings]
+                db.deactivate_missing(platform_name, active_ids)
+
             logger.info(
                 f"[{platform_name}] {len(listings)} Inserate gefunden, "
                 f"{new_count} neu"
@@ -222,14 +245,32 @@ def run_search_cycle(tier='all', parallel=True):
                     )
 
                 db.log_search(platform_name, len(listings), new_count)
+                platform_results[platform_name] = {
+                    'success': True,
+                    'count': len(listings),
+                    'new': new_count,
+                    'error': None,
+                }
+
+                # Nur bei erfolgreichem Scraping: Alte Inserate deaktivieren
+                if len(listings) > 0:
+                    active_ids = [l.external_id for l in listings]
+                    db.deactivate_missing(platform_name, active_ids)
+
                 logger.info(
                     f"[{platform_name}] {len(listings)} Inserate gefunden, "
                     f"{new_count} neu"
                 )
 
             except Exception as e:
+                # Bei Fehler: Nichts deaktivieren, alte Inserate behalten
                 logger.error(f"[{platform_name}] Fehler: {e}")
                 db.log_search(platform_name, 0, 0, str(e))
+                platform_results[platform_name] = {
+                    'success': False,
+                    'count': 0,
+                    'error': str(e),
+                }
 
     # Benachrichtigungen
     all_new_listings.sort(key=lambda x: x.total_score or 0, reverse=True)
@@ -249,6 +290,8 @@ def run_search_cycle(tier='all', parallel=True):
         f"Statistik: {stats['total_active']} aktive Inserate, "
         f"Ø Score: {stats['avg_score']}"
     )
+
+    return platform_results
 
 
 def main():

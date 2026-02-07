@@ -90,6 +90,19 @@
         .btn-scraper:disabled { background: #ccc; cursor: not-allowed; }
         .scraper-status { font-size: 12px; color: #666; margin-top: 6px; text-align: center; }
 
+        .platform-status { margin-top: 12px; }
+        .platform-status h4 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 8px; }
+        .platform-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+        .platform-light { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+        .platform-light.success { background: #4CAF50; box-shadow: 0 0 4px #4CAF50; }
+        .platform-light.error { background: #f44336; box-shadow: 0 0 4px #f44336; }
+        .platform-light.pending { background: #9E9E9E; }
+        .platform-name { flex: 1; }
+        .platform-count { color: #888; font-size: 11px; }
+        .platform-debug { font-size: 10px; padding: 2px 6px; border-radius: 3px; border: 1px solid #f44336;
+            color: #f44336; background: white; cursor: pointer; }
+        .platform-debug:hover { background: #ffebee; }
+
         .checkbox-filter { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
         .checkbox-filter input[type="checkbox"] { width: 18px; height: 18px; }
         .checkbox-filter label { font-size: 14px; cursor: pointer; }
@@ -187,6 +200,24 @@
                     {% else %}
                         Bereit
                     {% endif %}
+                </div>
+
+                <!-- Platform Status -->
+                <div class="platform-status" id="platform-status">
+                    <h4>Plattform-Status</h4>
+                    {% for platform, data in platform_status.items() %}
+                    <div class="platform-item">
+                        <span class="platform-light {{ 'success' if data.success else 'error' }}"></span>
+                        <span class="platform-name">{{ platform }}</span>
+                        {% if data.success %}
+                        <span class="platform-count">{{ data.count }} gefunden</span>
+                        {% else %}
+                        <button class="platform-debug" onclick="copyDebug('{{ platform }}', '{{ data.error | e }}')">Debug</button>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div style="font-size: 11px; color: #999;">Noch kein Lauf</div>
+                    {% endfor %}
                 </div>
             </div>
 
@@ -454,6 +485,8 @@
                         if (data.last_run) {
                             status.textContent = 'Letzter Lauf: ' + data.last_run + ' - Seite neu laden für Ergebnisse';
                         }
+                        // Update platform status when done
+                        updatePlatformStatus();
                     }
                 });
         }
@@ -494,6 +527,48 @@
                     } else {
                         alert('Keine Duplikate gefunden.');
                     }
+                });
+        }
+
+        function copyDebug(platform, error) {
+            const debugInfo = `Platform: ${platform}\nError: ${error}\nTime: ${new Date().toISOString()}`;
+            navigator.clipboard.writeText(debugInfo).then(() => {
+                alert('Debug-Info in Zwischenablage kopiert:\n\n' + debugInfo);
+            }).catch(err => {
+                // Fallback für ältere Browser
+                prompt('Debug-Info kopieren:', debugInfo);
+            });
+        }
+
+        function updatePlatformStatus() {
+            fetch('/platform-status')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('platform-status');
+                    if (!container) return;
+
+                    let html = '<h4>Plattform-Status</h4>';
+                    const platforms = Object.keys(data);
+
+                    if (platforms.length === 0) {
+                        html += '<div style="font-size: 11px; color: #999;">Noch kein Lauf</div>';
+                    } else {
+                        platforms.forEach(platform => {
+                            const d = data[platform];
+                            const lightClass = d.success ? 'success' : 'error';
+                            html += `<div class="platform-item">
+                                <span class="platform-light ${lightClass}"></span>
+                                <span class="platform-name">${platform}</span>`;
+                            if (d.success) {
+                                html += `<span class="platform-count">${d.count} gefunden</span>`;
+                            } else {
+                                const escapedError = (d.error || '').replace(/'/g, "\\'");
+                                html += `<button class="platform-debug" onclick="copyDebug('${platform}', '${escapedError}')">Debug</button>`;
+                            }
+                            html += '</div>';
+                        });
+                    }
+                    container.innerHTML = html;
                 });
         }
     </script>
