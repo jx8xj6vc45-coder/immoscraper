@@ -13,10 +13,13 @@ ITEMS_PER_PAGE = 20
 MAX_LISTINGS = 200  # Maximum number of listings to keep in view
 
 # Status für Scraper-Trigger
-scraper_status = {'running': False, 'last_run': None, 'message': ''}
+scraper_status = {'running': False, 'last_run': None, 'message': '', 'completed': False}
 
 # Status pro Plattform: {'platform': {'success': bool, 'count': int, 'error': str, 'timestamp': str}}
 platform_status = {}
+
+# Scraper-Fortschritt: {'total': int, 'current': int, 'current_platform': str, 'platforms': []}
+scraper_progress = {'total': 0, 'current': 0, 'current_platform': '', 'platforms': []}
 
 # Migration flag
 _db_migrated = False
@@ -252,16 +255,27 @@ def index():
     )
 
 
+def update_progress(current, total, current_platform, all_platforms):
+    """Callback für Scraper-Fortschritt."""
+    global scraper_progress
+    scraper_progress['current'] = current
+    scraper_progress['total'] = total
+    scraper_progress['current_platform'] = current_platform or ''
+    scraper_progress['platforms'] = all_platforms or []
+
+
 def run_scraper_background():
     """Führt den Scraper im Hintergrund aus."""
-    global scraper_status, platform_status
+    global scraper_status, platform_status, scraper_progress
     try:
         scraper_status['running'] = True
+        scraper_status['completed'] = False
         scraper_status['message'] = 'Scraper läuft...'
+        scraper_progress = {'total': 0, 'current': 0, 'current_platform': '', 'platforms': []}
 
-        # Importiere und starte den Scraper
+        # Importiere und starte den Scraper mit Progress-Callback
         from main import run_search_cycle
-        results = run_search_cycle('all')
+        results = run_search_cycle('all', progress_callback=update_progress)
 
         # Platform-Status aktualisieren
         if results:
@@ -274,6 +288,7 @@ def run_scraper_background():
 
         scraper_status['message'] = 'Scraper abgeschlossen!'
         scraper_status['last_run'] = datetime.now().strftime('%H:%M:%S')
+        scraper_status['completed'] = True
     except Exception as e:
         scraper_status['message'] = f'Fehler: {str(e)}'
     finally:
@@ -299,6 +314,12 @@ def trigger_scraper():
 def get_scraper_status():
     """Gibt den aktuellen Scraper-Status zurück."""
     return jsonify(scraper_status)
+
+
+@app.route('/scraper-progress')
+def get_scraper_progress():
+    """Gibt den aktuellen Scraper-Fortschritt zurück."""
+    return jsonify(scraper_progress)
 
 
 @app.route('/platform-status')

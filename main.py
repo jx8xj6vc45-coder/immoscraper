@@ -69,8 +69,13 @@ def run_single_scraper(scraper, config):
         return {'platform': platform_name, 'listings': [], 'error': str(e)}
 
 
-def run_search_cycle(tier='all', parallel=True):
+def run_search_cycle(tier='all', parallel=True, progress_callback=None):
     """Ein kompletter Such-Durchlauf für ein oder alle Tiers.
+
+    Args:
+        tier: 'all', 'tier1', 'tier2', oder 'tier3'
+        parallel: Paralleles Scraping aktivieren
+        progress_callback: Optional callback(current, total, platform_name) für Fortschritt
 
     Returns:
         dict: Platform status mit success/error pro Plattform
@@ -87,6 +92,11 @@ def run_search_cycle(tier='all', parallel=True):
         scrapers = get_all_scrapers(config)
     else:
         scrapers = get_scrapers_for_tier(config, tier)
+
+    # Initialer Progress-Report
+    platform_names = [s.get_name() for s in scrapers]
+    if progress_callback:
+        progress_callback(0, len(scrapers), None, platform_names)
 
     all_new_listings = []
     platform_results = {}  # Track results per platform
@@ -110,10 +120,12 @@ def run_search_cycle(tier='all', parallel=True):
                 scraper_results.append(result)
 
         # Ergebnisse sequentiell verarbeiten (DB-Zugriffe nicht parallel)
-        for result in scraper_results:
+        for idx, result in enumerate(scraper_results):
             platform_name = result['platform']
             listings = result['listings']
             error = result['error']
+            if progress_callback:
+                progress_callback(idx, len(scraper_results), platform_name, platform_names)
 
             if error:
                 db.log_search(platform_name, 0, 0, error)
@@ -130,11 +142,11 @@ def run_search_cycle(tier='all', parallel=True):
                 listing.listing_hash = generate_listing_hash(listing)
 
                 if db.listing_exists(listing.listing_hash):
-                    logger.debug(f"[{platform_name}] Duplikat übersprungen: {listing.title}")
+                    logger.info(f"  ⏭ Übersprungen (Duplikat): {listing.title[:50]}...")
                     continue
 
                 if db.listing_exists_by_external_id(listing.external_id, platform_name):
-                    logger.debug(f"[{platform_name}] Bereits bekannt: {listing.external_id}")
+                    logger.info(f"  ⏭ Übersprungen (bereits bekannt): {listing.external_id}")
                     continue
 
                 # Anreicherung mit Geo/Transport/Bildung
@@ -146,7 +158,7 @@ def run_search_cycle(tier='all', parallel=True):
                 # ÖV-Filter: >35 Min ausschliessen
                 max_travel = config.get('search_criteria', {}).get('max_travel_time_minutes', 35)
                 if listing.travel_time_to_hb and listing.travel_time_to_hb > max_travel:
-                    logger.debug(f"[{platform_name}] ÖV zu weit: {listing.travel_time_to_hb} Min")
+                    logger.info(f"  ⏭ Übersprungen (ÖV {listing.travel_time_to_hb} Min > {max_travel} Min): {listing.title[:40]}...")
                     continue
 
                 # Scoring
@@ -191,8 +203,10 @@ def run_search_cycle(tier='all', parallel=True):
             )
     else:
         # Sequentielles Scraping (Fallback)
-        for scraper in scrapers:
+        for idx, scraper in enumerate(scrapers):
             platform_name = scraper.get_name()
+            if progress_callback:
+                progress_callback(idx, len(scrapers), platform_name, platform_names)
             try:
                 logger.info(f"[{platform_name}] Starte Suche...")
                 listings = scraper.search()
@@ -203,11 +217,11 @@ def run_search_cycle(tier='all', parallel=True):
                     listing.listing_hash = generate_listing_hash(listing)
 
                     if db.listing_exists(listing.listing_hash):
-                        logger.debug(f"[{platform_name}] Duplikat übersprungen: {listing.title}")
+                        logger.info(f"  ⏭ Übersprungen (Duplikat): {listing.title[:50]}...")
                         continue
 
                     if db.listing_exists_by_external_id(listing.external_id, platform_name):
-                        logger.debug(f"[{platform_name}] Bereits bekannt: {listing.external_id}")
+                        logger.info(f"  ⏭ Übersprungen (bereits bekannt): {listing.external_id}")
                         continue
 
                     # Anreicherung mit Geo/Transport/Bildung
@@ -219,7 +233,7 @@ def run_search_cycle(tier='all', parallel=True):
                     # ÖV-Filter: >35 Min ausschliessen
                     max_travel = config.get('search_criteria', {}).get('max_travel_time_minutes', 35)
                     if listing.travel_time_to_hb and listing.travel_time_to_hb > max_travel:
-                        logger.debug(f"[{platform_name}] ÖV zu weit: {listing.travel_time_to_hb} Min")
+                        logger.info(f"  ⏭ Übersprungen (ÖV {listing.travel_time_to_hb} Min > {max_travel} Min): {listing.title[:40]}...")
                         continue
 
                     # Scoring

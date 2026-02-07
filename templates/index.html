@@ -89,6 +89,16 @@
         .btn-scraper:hover { background: #43A047; }
         .btn-scraper:disabled { background: #ccc; cursor: not-allowed; }
         .scraper-status { font-size: 12px; color: #666; margin-top: 6px; text-align: center; }
+        .scraper-progress { margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 6px; display: none; }
+        .progress-bar { height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+        .progress-fill { height: 100%; background: #4CAF50; transition: width 0.3s ease; }
+        .progress-text { font-size: 11px; color: #666; text-align: center; }
+        .progress-platforms { margin-top: 8px; }
+        .progress-platform { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 2px 0; }
+        .progress-platform .status-icon { width: 12px; text-align: center; }
+        .progress-platform.done { color: #4CAF50; }
+        .progress-platform.current { color: #1a1a2e; font-weight: 600; }
+        .progress-platform.pending { color: #999; }
 
         .platform-status { margin-top: 12px; }
         .platform-status h4 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 8px; }
@@ -200,6 +210,15 @@
                     {% else %}
                         Bereit
                     {% endif %}
+                </div>
+
+                <!-- Scraper Progress -->
+                <div class="scraper-progress" id="scraper-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text" id="progress-text">Starte...</div>
+                    <div class="progress-platforms" id="progress-platforms"></div>
                 </div>
 
                 <!-- Platform Status -->
@@ -441,54 +460,109 @@
         </main>
     </div>
     <script>
+        let scraperWasRunning = false;
+
         function triggerScraper() {
             const btn = document.getElementById('scraper-btn');
             const status = document.getElementById('scraper-status');
+            const progress = document.getElementById('scraper-progress');
 
             btn.disabled = true;
             btn.textContent = 'Scraper läuft...';
             status.textContent = 'Starte Scraper...';
+            progress.style.display = 'block';
+            scraperWasRunning = true;
 
             fetch('/trigger-scraper', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     status.textContent = data.message;
                     if (data.success) {
-                        // Poll für Status-Updates
+                        // Poll für Status- und Progress-Updates
                         checkScraperStatus();
                     } else {
                         btn.disabled = false;
                         btn.textContent = 'Scraper starten';
+                        progress.style.display = 'none';
                     }
                 })
                 .catch(err => {
                     status.textContent = 'Fehler: ' + err;
                     btn.disabled = false;
                     btn.textContent = 'Scraper starten';
+                    progress.style.display = 'none';
                 });
         }
 
         function checkScraperStatus() {
-            fetch('/scraper-status')
-                .then(r => r.json())
-                .then(data => {
-                    const btn = document.getElementById('scraper-btn');
-                    const status = document.getElementById('scraper-status');
+            // Fetch both status and progress
+            Promise.all([
+                fetch('/scraper-status').then(r => r.json()),
+                fetch('/scraper-progress').then(r => r.json())
+            ]).then(([statusData, progressData]) => {
+                const btn = document.getElementById('scraper-btn');
+                const status = document.getElementById('scraper-status');
+                const progress = document.getElementById('scraper-progress');
 
-                    status.textContent = data.message || (data.running ? 'Scraper läuft...' : 'Bereit');
+                status.textContent = statusData.message || (statusData.running ? 'Scraper läuft...' : 'Bereit');
 
-                    if (data.running) {
-                        setTimeout(checkScraperStatus, 2000);
-                    } else {
-                        btn.disabled = false;
-                        btn.textContent = 'Scraper starten';
-                        if (data.last_run) {
-                            status.textContent = 'Letzter Lauf: ' + data.last_run + ' - Seite neu laden für Ergebnisse';
-                        }
-                        // Update platform status when done
-                        updatePlatformStatus();
+                // Update progress display
+                if (statusData.running && progressData.total > 0) {
+                    updateProgressDisplay(progressData);
+                }
+
+                if (statusData.running) {
+                    setTimeout(checkScraperStatus, 1000);
+                } else {
+                    btn.disabled = false;
+                    btn.textContent = 'Scraper starten';
+                    progress.style.display = 'none';
+
+                    // Update platform status when done
+                    updatePlatformStatus();
+
+                    // Auto-refresh when scraping is completed
+                    if (scraperWasRunning && statusData.completed) {
+                        status.textContent = 'Abgeschlossen! Seite wird aktualisiert...';
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1500);
                     }
+                }
+            });
+        }
+
+        function updateProgressDisplay(data) {
+            const fill = document.getElementById('progress-fill');
+            const text = document.getElementById('progress-text');
+            const platforms = document.getElementById('progress-platforms');
+
+            if (data.total > 0) {
+                const percent = Math.round((data.current / data.total) * 100);
+                fill.style.width = percent + '%';
+                text.textContent = `${data.current + 1} von ${data.total} Plattformen`;
+            }
+
+            // Show platform list with status
+            if (data.platforms && data.platforms.length > 0) {
+                let html = '';
+                data.platforms.forEach((p, idx) => {
+                    let statusClass = 'pending';
+                    let icon = '○';
+                    if (idx < data.current) {
+                        statusClass = 'done';
+                        icon = '✓';
+                    } else if (p === data.current_platform) {
+                        statusClass = 'current';
+                        icon = '●';
+                    }
+                    html += `<div class="progress-platform ${statusClass}">
+                        <span class="status-icon">${icon}</span>
+                        <span>${p}</span>
+                    </div>`;
                 });
+                platforms.innerHTML = html;
+            }
         }
 
         function toggleFavorite(listingId, btn) {
