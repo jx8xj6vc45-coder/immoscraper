@@ -10,6 +10,7 @@ from scrapers.immostreet import ImmoStreetScraper
 from scrapers.engelvoelkers import EngelVoelkersScraper
 from scrapers.walde import WaldeScraper
 from scrapers.betterhomes import BetterhomesScraper
+from scrapers.troendle import TroendleScraper
 
 
 SCRAPER_REGISTRY = {
@@ -25,6 +26,7 @@ SCRAPER_REGISTRY = {
     'engelvoelkers': EngelVoelkersScraper,
     'walde': WaldeScraper,
     'betterhomes': BetterhomesScraper,
+    'troendle': TroendleScraper,
 }
 
 
