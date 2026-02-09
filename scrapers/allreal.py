@@ -92,10 +92,40 @@ class AllrealScraper(BaseScraper):
                 listing.city = plz_match.group(2)
                 listing.address = f"{plz_match.group(1)} {plz_match.group(2)}"
 
-            # Bild
+            # Bild - verschiedene Attribute für Lazy Loading prüfen
             img = container.find('img')
             if img:
-                listing.image_url = img.get('src', '') or img.get('data-src', '')
+                img_url = (
+                    img.get('src') or
+                    img.get('data-src') or
+                    img.get('data-lazy') or
+                    img.get('data-original') or
+                    ''
+                )
+                # Srcset als Fallback
+                if not img_url or 'placeholder' in img_url.lower() or 'data:image' in img_url:
+                    srcset = img.get('srcset', '')
+                    if srcset:
+                        img_url = srcset.split(',')[0].split()[0]
+
+                if img_url and not img_url.startswith('data:'):
+                    if img_url.startswith('//'):
+                        img_url = f"https:{img_url}"
+                    elif img_url.startswith('/'):
+                        img_url = f"{self.BASE_URL}{img_url}"
+                    listing.image_url = img_url
+
+            # Fallback: Style mit background-image
+            if not listing.image_url:
+                for elem in container.find_all(style=True):
+                    style = elem.get('style', '')
+                    bg_match = re.search(r'background-image:\s*url\([\'"]?([^\'")\s]+)[\'"]?\)', style)
+                    if bg_match:
+                        img_url = bg_match.group(1)
+                        if img_url.startswith('/'):
+                            img_url = f"{self.BASE_URL}{img_url}"
+                        listing.image_url = img_url
+                        break
 
             # Typ
             listing.property_type = 'wohnung'

@@ -1,7 +1,6 @@
-"""Scraper für Comparis.ch Immobilien."""
+"""Scraper für Engel & Völkers Schweiz."""
 
 import re
-import json
 import logging
 import time
 import random
@@ -13,72 +12,46 @@ from scrapers.base import BaseScraper, Listing
 logger = logging.getLogger(__name__)
 
 
-class ComparisScraper(BaseScraper):
-    """Scraper für comparis.ch Immobilien.
+class EngelVoelkersScraper(BaseScraper):
+    """Scraper für engelvoelkers.com - Premium Immobilienmakler."""
 
-    Extrahiert Listing-Daten via Playwright Browser-Automatisierung.
-    """
-
-    BASE_URL = 'https://www.comparis.ch'
+    BASE_URL = 'https://www.engelvoelkers.com'
     MAX_PAGES = 3
 
     def get_name(self) -> str:
-        return 'comparis'
+        return 'engelvoelkers'
 
     def build_search_url(self, page: int = 1) -> str:
         min_rooms = self.criteria.get('min_rooms', 4.5)
         max_price = self.criteria.get('max_price', 2200000)
 
-        # Comparis URL-Struktur für Kaufobjekte in Zürich
+        # Engel & Völkers Suche für Kanton Zürich
         url = (
-            f"{self.BASE_URL}/immobilien/result/list"
-            f"?requestobject=%7B%22DealType%22%3A%2220%22%2C"  # 20 = Kaufen
-            f"%22SiteId%22%3A%220%22%2C"
-            f"%22RootPropertyTypes%22%3A%5B%5D%2C"
-            f"%22PropertyTypes%22%3A%5B%5D%2C"
-            f"%22RoomsFrom%22%3A%22{int(min_rooms)}%22%2C"
-            f"%22RoomsTo%22%3Anull%2C"
-            f"%22FloorSearchType%22%3A%220%22%2C"
-            f"%22LivingSpaceFrom%22%3Anull%2C"
-            f"%22LivingSpaceTo%22%3Anull%2C"
-            f"%22PriceFrom%22%3Anull%2C"
-            f"%22PriceTo%22%3A%22{max_price}%22%2C"
-            f"%22ComparisPointsMin%22%3A%220%22%2C"
-            f"%22AdAgeMax%22%3A%220%22%2C"
-            f"%22AdAgeInHoursMax%22%3Anull%2C"
-            f"%22Keyword%22%3A%22%22%2C"
-            f"%22WithImagesOnly%22%3Anull%2C"
-            f"%22WithPointsOnly%22%3Anull%2C"
-            f"%22Radius%22%3Anull%2C"
-            f"%22MinAvailableDate%22%3A%221753-01-01%22%2C"
-            f"%22MinChangeDate%22%3A%221753-01-01%22%2C"
-            f"%22LocationSearchString%22%3A%22Kanton%20Z%C3%BCrich%22%2C"
-            f"%22Sort%22%3A%225%22%2C"  # 5 = Neueste zuerst
-            f"%22HasBalcony%22%3Afalse%2C"
-            f"%22HasTerrace%22%3Afalse%2C"
-            f"%22HasFireplace%22%3Afalse%2C"
-            f"%22HasDishwasher%22%3Afalse%2C"
-            f"%22HasWashingMachine%22%3Afalse%2C"
-            f"%22HasLift%22%3Afalse%2C"
-            f"%22HasParking%22%3Afalse%2C"
-            f"%22PetsAllowed%22%3Afalse%2C"
-            f"%22MinersStandard%22%3Anull%2C"
-            f"%22Page%22%3A%22{page}%22%7D"
+            f"{self.BASE_URL}/search/"
+            f"?q=&startIndex={(page - 1) * 18}"
+            f"&businessArea=residential"
+            f"&limitTo=buy"
+            f"&locationIds=zurich_canton_101833"
+            f"&priceMax={max_price}"
+            f"&unit=chf"
+            f"&roomsMin={int(min_rooms)}"
+            f"&sortBy=sortDate"
+            f"&sortOrder=desc"
         )
         return url
 
     def search(self) -> List[Listing]:
-        """Überschreibt die Basis-Suche um mehrere Seiten zu laden."""
+        """Suche über mehrere Seiten."""
         all_listings = []
         seen_ids = set()
 
         for page in range(1, self.MAX_PAGES + 1):
-            logger.info(f"[comparis] Lade Seite {page}...")
+            logger.info(f"[engelvoelkers] Lade Seite {page}...")
 
             page_listings = self._search_page(page)
 
             if not page_listings:
-                logger.info(f"[comparis] Seite {page}: keine weiteren Listings")
+                logger.info(f"[engelvoelkers] Seite {page}: keine weiteren Listings")
                 break
 
             new_count = 0
@@ -88,14 +61,14 @@ class ComparisScraper(BaseScraper):
                     all_listings.append(listing)
                     new_count += 1
 
-            logger.info(f"[comparis] Seite {page}: {new_count} neue Listings")
+            logger.info(f"[engelvoelkers] Seite {page}: {new_count} neue Listings")
 
-            if len(page_listings) < 20:
+            if len(page_listings) < 18:
                 break
 
             time.sleep(random.uniform(2.0, 4.0))
 
-        logger.info(f"[comparis] Total: {len(all_listings)} Listings")
+        logger.info(f"[engelvoelkers] Total: {len(all_listings)} Listings")
         return all_listings
 
     def _search_page(self, page: int) -> List[Listing]:
@@ -105,7 +78,7 @@ class ComparisScraper(BaseScraper):
         context = None
         try:
             url = self.build_search_url(page)
-            logger.debug(f"[comparis] Fetching {url}")
+            logger.debug(f"[engelvoelkers] Fetching {url}")
 
             from playwright.sync_api import sync_playwright
 
@@ -126,7 +99,6 @@ class ComparisScraper(BaseScraper):
                     '--disable-blink-features=AutomationControlled',
                     '--disable-dev-shm-usage',
                     '--no-sandbox',
-                    '--disable-features=AsyncDns',
                 ]
                 browser = pw.chromium.launch(headless=True, args=launch_args)
 
@@ -148,6 +120,10 @@ class ComparisScraper(BaseScraper):
             page_obj.goto(url, wait_until='domcontentloaded', timeout=60000)
             page_obj.wait_for_timeout(5000)
 
+            # Scroll um Lazy Loading zu triggern
+            page_obj.evaluate('window.scrollTo(0, document.body.scrollHeight / 2)')
+            page_obj.wait_for_timeout(2000)
+
             content = page_obj.content()
 
             context.close()
@@ -164,7 +140,7 @@ class ComparisScraper(BaseScraper):
             return filtered
 
         except Exception as e:
-            logger.error(f"[comparis] Seite {page} Fehler: {e}")
+            logger.error(f"[engelvoelkers] Seite {page} Fehler: {e}")
             return []
         finally:
             if context:
@@ -188,21 +164,22 @@ class ComparisScraper(BaseScraper):
         listings = []
         soup = BeautifulSoup(content, 'lxml')
 
-        # Comparis nutzt data-testid für Listing-Cards
-        cards = soup.find_all('div', {'data-testid': re.compile(r'result-list-item')})
+        # Engel & Völkers verwendet article oder div Cards
+        cards = soup.find_all('a', href=re.compile(r'/objekt/'))
         if not cards:
-            # Fallback: Suche nach Listing-Containern
-            cards = soup.find_all('a', href=re.compile(r'/immobilien/marktplatz/details/show/'))
+            cards = soup.find_all('div', class_=re.compile(r'property|listing|result', re.I))
 
-        logger.info(f"[comparis] {len(cards)} Listing-Cards gefunden")
+        logger.info(f"[engelvoelkers] {len(cards)} Listing-Cards gefunden")
 
+        seen_urls = set()
         for card in cards:
             try:
                 listing = self._parse_card(card)
-                if listing:
+                if listing and listing.url not in seen_urls:
+                    seen_urls.add(listing.url)
                     listings.append(listing)
             except Exception as e:
-                logger.debug(f"[comparis] Card-Parsing Fehler: {e}")
+                logger.debug(f"[engelvoelkers] Card-Parsing Fehler: {e}")
 
         return listings
 
@@ -210,70 +187,78 @@ class ComparisScraper(BaseScraper):
         """Parst eine einzelne Listing-Card."""
         listing = Listing()
 
-        # External ID aus href extrahieren
-        link = card.find('a', href=re.compile(r'/immobilien/'))
-        if not link:
-            link = card if card.name == 'a' else None
+        # URL und ID extrahieren
+        if card.name == 'a':
+            href = card.get('href', '')
+        else:
+            link = card.find('a', href=re.compile(r'/objekt/|/property/'))
+            href = link.get('href', '') if link else ''
 
-        if link and link.get('href'):
-            href = link['href']
-            # ID aus URL extrahieren
-            match = re.search(r'/show/(\d+)', href)
-            if match:
-                listing.external_id = f"cp-{match.group(1)}"
-                listing.url = f"{self.BASE_URL}{href}" if href.startswith('/') else href
-
-        if not listing.external_id:
+        if not href:
             return None
 
+        if href.startswith('/'):
+            listing.url = f"{self.BASE_URL}{href}"
+        else:
+            listing.url = href
+
+        # ID aus URL extrahieren
+        id_match = re.search(r'/objekt/([^/?]+)', href) or re.search(r'/property/([^/?]+)', href)
+        if id_match:
+            listing.external_id = f"ev-{id_match.group(1)}"
+        else:
+            listing.external_id = f"ev-{abs(hash(href))}"
+
+        # Container für Textsuche
+        container = card if card.name != 'a' else card
+
+        text = container.get_text(' ', strip=True)
+
         # Titel
-        title_elem = card.find(['h2', 'h3', 'span'], class_=re.compile(r'title|heading', re.I))
+        title_elem = container.find(['h2', 'h3', 'h4', 'span'], class_=re.compile(r'title|name|heading', re.I))
         if title_elem:
             listing.title = title_elem.get_text(strip=True)
+        else:
+            # Fallback: ersten sinnvollen Text nehmen
+            for elem in container.find_all(['h2', 'h3', 'h4', 'p']):
+                t = elem.get_text(strip=True)
+                if t and len(t) > 10:
+                    listing.title = t[:100]
+                    break
 
         # Preis
-        price_elem = card.find(string=re.compile(r"CHF|Fr\.|'"))
-        if price_elem:
-            price_text = price_elem.get_text() if hasattr(price_elem, 'get_text') else str(price_elem)
-            price_match = re.search(r"[\d']+", price_text.replace(' ', ''))
-            if price_match:
-                listing.price = int(price_match.group().replace("'", ""))
+        price_match = re.search(r"(?:CHF|EUR)\s*([\d'.,]+)", text)
+        if price_match:
+            listing.price = self._parse_price(price_match.group(1))
 
-        # Zimmer und Fläche
-        text_content = card.get_text()
-        rooms_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:Zimmer|Zi\.)', text_content)
+        # Zimmer
+        rooms_match = re.search(r'(\d+\.?\d*)\s*(?:Zimmer|Zi\.|rooms|pcs)', text, re.IGNORECASE)
         if rooms_match:
             listing.rooms = float(rooms_match.group(1))
 
-        area_match = re.search(r'(\d+)\s*m[²2]', text_content)
+        # Fläche
+        area_match = re.search(r'(\d+)\s*m[²2]', text)
         if area_match:
             listing.area_sqm = int(area_match.group(1))
 
-        # Adresse/Ort
-        location_elem = card.find(string=re.compile(r'\d{4}\s+\w+'))
-        if location_elem:
-            loc_text = location_elem.get_text() if hasattr(location_elem, 'get_text') else str(location_elem)
-            listing.address = loc_text.strip()
-            # Stadt extrahieren
-            city_match = re.search(r'\d{4}\s+(.+)', loc_text)
-            if city_match:
-                listing.city = city_match.group(1).strip()
+        # Ort
+        plz_match = re.search(r'(\d{4})\s+([A-ZÄÖÜ][a-zäöüéèê]+)', text)
+        if plz_match:
+            listing.city = plz_match.group(2)
+            listing.address = f"{plz_match.group(1)} {plz_match.group(2)}"
 
-        # Bild - verschiedene Attribute für Lazy Loading prüfen
-        img = card.find('img')
+        # Bild
+        img = container.find('img')
         if img:
             img_url = (
                 img.get('src') or
                 img.get('data-src') or
-                img.get('data-lazy') or
-                img.get('data-original') or
+                img.get('data-lazy-src') or
                 ''
             )
-            # Srcset als Fallback
-            if not img_url or 'placeholder' in img_url.lower() or 'data:image' in img_url:
+            if not img_url or 'placeholder' in img_url.lower():
                 srcset = img.get('srcset', '')
                 if srcset:
-                    # Erstes Bild aus srcset nehmen
                     img_url = srcset.split(',')[0].split()[0]
 
             if img_url and not img_url.startswith('data:'):
@@ -283,9 +268,9 @@ class ComparisScraper(BaseScraper):
                     img_url = f"{self.BASE_URL}{img_url}"
                 listing.image_url = img_url
 
-        # Fallback: Style mit background-image
+        # Fallback: background-image
         if not listing.image_url:
-            for elem in card.find_all(style=True):
+            for elem in container.find_all(style=True):
                 style = elem.get('style', '')
                 bg_match = re.search(r'background-image:\s*url\([\'"]?([^\'")\s]+)[\'"]?\)', style)
                 if bg_match:
@@ -295,4 +280,16 @@ class ComparisScraper(BaseScraper):
                     listing.image_url = img_url
                     break
 
+        # Typ
+        listing.property_type = 'wohnung'
+        if listing.title:
+            title_lower = listing.title.lower()
+            if any(w in title_lower for w in ['haus', 'villa', 'reihenhaus', 'doppelhaus', 'house']):
+                listing.property_type = 'einfamilienhaus'
+
         return listing
+
+    def _parse_price(self, price_str: str) -> int:
+        """Parst einen Preis-String zu Integer."""
+        cleaned = re.sub(r"[^\d]", "", price_str)
+        return int(cleaned) if cleaned else 0

@@ -7,6 +7,9 @@ from scrapers.comparis import ComparisScraper
 from scrapers.flatfox import FlatfoxScraper
 from scrapers.neubauprojekte import NeubauprojekteScraper
 from scrapers.immostreet import ImmoStreetScraper
+from scrapers.engelvoelkers import EngelVoelkersScraper
+from scrapers.walde import WaldeScraper
+from scrapers.betterhomes import BetterhomesScraper
 
 
 SCRAPER_REGISTRY = {
@@ -19,6 +22,9 @@ SCRAPER_REGISTRY = {
     'flatfox': FlatfoxScraper,
     'neubauprojekte': NeubauprojekteScraper,
     'immostreet': ImmoStreetScraper,
+    'engelvoelkers': EngelVoelkersScraper,
+    'walde': WaldeScraper,
+    'betterhomes': BetterhomesScraper,
 }
 
 

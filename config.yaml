@@ -30,12 +30,15 @@ platforms:
     - allreal
     - mobimo
   tier2:
-    # Sekundäre Plattformen
+    # Sekundäre Plattformen & Aggregatoren
     - newhome
     - comparis
     - flatfox
   tier3:
-    # Spezialisierte und kleinere Plattformen
+    # Makler & spezialisierte Plattformen
+    - engelvoelkers
+    - walde
+    - betterhomes
     - neubauprojekte
     - immostreet
 
