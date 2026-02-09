@@ -146,7 +146,16 @@ class ComparisScraper(BaseScraper):
                 stealth_sync(page_obj)
 
             page_obj.goto(url, wait_until='domcontentloaded', timeout=60000)
-            page_obj.wait_for_timeout(5000)
+            page_obj.wait_for_timeout(3000)
+
+            # Scroll durch die Seite um Lazy Loading zu triggern
+            for i in range(5):
+                page_obj.evaluate(f'window.scrollTo(0, {(i + 1) * 500})')
+                page_obj.wait_for_timeout(800)
+
+            # Zurück nach oben und nochmal warten
+            page_obj.evaluate('window.scrollTo(0, 0)')
+            page_obj.wait_for_timeout(1000)
 
             content = page_obj.content()
 
@@ -259,40 +268,50 @@ class ComparisScraper(BaseScraper):
             if city_match:
                 listing.city = city_match.group(1).strip()
 
-        # Bild - verschiedene Attribute für Lazy Loading prüfen
-        img = card.find('img')
-        if img:
-            img_url = (
-                img.get('src') or
-                img.get('data-src') or
-                img.get('data-lazy') or
-                img.get('data-original') or
-                ''
-            )
-            # Srcset als Fallback
-            if not img_url or 'placeholder' in img_url.lower() or 'data:image' in img_url:
-                srcset = img.get('srcset', '')
-                if srcset:
-                    # Erstes Bild aus srcset nehmen
+        # Bild - verschiedene Methoden probieren
+        img_url = None
+
+        # 1. Suche nach picture/source Element (moderne Lazy Loading)
+        picture = card.find('picture')
+        if picture:
+            source = picture.find('source')
+            if source:
+                srcset = source.get('srcset', '')
+                if srcset and 'data:image' not in srcset:
                     img_url = srcset.split(',')[0].split()[0]
 
-            if img_url and not img_url.startswith('data:'):
-                if img_url.startswith('//'):
-                    img_url = f"https:{img_url}"
-                elif img_url.startswith('/'):
-                    img_url = f"{self.BASE_URL}{img_url}"
-                listing.image_url = img_url
+        # 2. Normales img Element
+        if not img_url:
+            img = card.find('img')
+            if img:
+                # Prüfe verschiedene Attribute
+                for attr in ['src', 'data-src', 'data-lazy', 'data-original', 'data-lazy-src']:
+                    val = img.get(attr, '')
+                    if val and 'data:image' not in val and 'placeholder' not in val.lower():
+                        img_url = val
+                        break
 
-        # Fallback: Style mit background-image
-        if not listing.image_url:
+                # Srcset als Fallback
+                if not img_url:
+                    srcset = img.get('srcset', '')
+                    if srcset and 'data:image' not in srcset:
+                        img_url = srcset.split(',')[0].split()[0]
+
+        # 3. Fallback: Style mit background-image
+        if not img_url:
             for elem in card.find_all(style=True):
                 style = elem.get('style', '')
                 bg_match = re.search(r'background-image:\s*url\([\'"]?([^\'")\s]+)[\'"]?\)', style)
                 if bg_match:
                     img_url = bg_match.group(1)
-                    if img_url.startswith('/'):
-                        img_url = f"{self.BASE_URL}{img_url}"
-                    listing.image_url = img_url
                     break
+
+        # URL normalisieren
+        if img_url:
+            if img_url.startswith('//'):
+                img_url = f"https:{img_url}"
+            elif img_url.startswith('/'):
+                img_url = f"{self.BASE_URL}{img_url}"
+            listing.image_url = img_url
 
         return listing
