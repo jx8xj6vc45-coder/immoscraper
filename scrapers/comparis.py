@@ -145,24 +145,57 @@ class ComparisScraper(BaseScraper):
             if has_stealth:
                 stealth_sync(page_obj)
 
-            page_obj.goto(url, wait_until='domcontentloaded', timeout=60000)
-            page_obj.wait_for_timeout(3000)
+            page_obj.goto(url, wait_until='networkidle', timeout=60000)
+            page_obj.wait_for_timeout(2000)
 
             # Scroll durch die Seite um Lazy Loading zu triggern
-            for i in range(5):
-                page_obj.evaluate(f'window.scrollTo(0, {(i + 1) * 500})')
-                page_obj.wait_for_timeout(800)
+            for i in range(8):
+                page_obj.evaluate(f'window.scrollTo(0, {(i + 1) * 400})')
+                page_obj.wait_for_timeout(600)
 
-            # Zurück nach oben und nochmal warten
-            page_obj.evaluate('window.scrollTo(0, 0)')
-            page_obj.wait_for_timeout(1000)
+            # Warte auf Bilder
+            page_obj.wait_for_timeout(2000)
+
+            # Extrahiere Bild-URLs direkt via JavaScript
+            image_data = page_obj.evaluate('''() => {
+                const images = {};
+                document.querySelectorAll('a[href*="/immobilien/marktplatz/details/show/"]').forEach(link => {
+                    const match = link.href.match(/show\\/(\\d+)/);
+                    if (match) {
+                        const id = match[1];
+                        const img = link.querySelector('img');
+                        if (img) {
+                            // Versuche verschiedene Quellen
+                            let src = img.currentSrc || img.src;
+                            if (!src || src.includes('data:image')) {
+                                src = img.dataset.src || img.dataset.lazySrc || '';
+                            }
+                            if (src && !src.includes('data:image') && !src.includes('placeholder')) {
+                                images[id] = src;
+                            }
+                        }
+                        // Fallback: background-image
+                        if (!images[id]) {
+                            const bgElem = link.querySelector('[style*="background-image"]');
+                            if (bgElem) {
+                                const style = bgElem.style.backgroundImage;
+                                const urlMatch = style.match(/url\\(['"']?([^'"')]+)['"']?\\)/);
+                                if (urlMatch) {
+                                    images[id] = urlMatch[1];
+                                }
+                            }
+                        }
+                    }
+                });
+                return images;
+            }''')
 
             content = page_obj.content()
 
             context.close()
             context = None
 
-            listings = self.parse_listings(content)
+            listings = self.parse_listings(content, image_data)
 
             filtered = []
             for listing in listings:
@@ -192,10 +225,11 @@ class ComparisScraper(BaseScraper):
                 except Exception:
                     pass
 
-    def parse_listings(self, content: str) -> List[Listing]:
+    def parse_listings(self, content: str, image_data: dict = None) -> List[Listing]:
         """Parst Listings aus dem HTML-Content."""
         listings = []
         soup = BeautifulSoup(content, 'lxml')
+        image_data = image_data or {}
 
         # Comparis nutzt data-testid für Listing-Cards
         cards = soup.find_all('div', {'data-testid': re.compile(r'result-list-item')})
@@ -203,11 +237,11 @@ class ComparisScraper(BaseScraper):
             # Fallback: Suche nach Listing-Containern
             cards = soup.find_all('a', href=re.compile(r'/immobilien/marktplatz/details/show/'))
 
-        logger.info(f"[comparis] {len(cards)} Listing-Cards gefunden")
+        logger.info(f"[comparis] {len(cards)} Listing-Cards gefunden, {len(image_data)} Bilder via JS")
 
         for card in cards:
             try:
-                listing = self._parse_card(card)
+                listing = self._parse_card(card, image_data)
                 if listing:
                     listings.append(listing)
             except Exception as e:
@@ -215,9 +249,11 @@ class ComparisScraper(BaseScraper):
 
         return listings
 
-    def _parse_card(self, card) -> Listing:
+    def _parse_card(self, card, image_data: dict = None) -> Listing:
         """Parst eine einzelne Listing-Card."""
         listing = Listing()
+        image_data = image_data or {}
+        listing_id = None
 
         # External ID aus href extrahieren
         link = card.find('a', href=re.compile(r'/immobilien/'))
@@ -229,7 +265,8 @@ class ComparisScraper(BaseScraper):
             # ID aus URL extrahieren
             match = re.search(r'/show/(\d+)', href)
             if match:
-                listing.external_id = f"cp-{match.group(1)}"
+                listing_id = match.group(1)
+                listing.external_id = f"cp-{listing_id}"
                 listing.url = f"{self.BASE_URL}{href}" if href.startswith('/') else href
 
         if not listing.external_id:
@@ -271,16 +308,21 @@ class ComparisScraper(BaseScraper):
         # Bild - verschiedene Methoden probieren
         img_url = None
 
-        # 1. Suche nach picture/source Element (moderne Lazy Loading)
-        picture = card.find('picture')
-        if picture:
-            source = picture.find('source')
-            if source:
-                srcset = source.get('srcset', '')
-                if srcset and 'data:image' not in srcset:
-                    img_url = srcset.split(',')[0].split()[0]
+        # 1. Aus JavaScript extrahierte Bilder (zuverlässigste Methode)
+        if listing_id and listing_id in image_data:
+            img_url = image_data[listing_id]
 
-        # 2. Normales img Element
+        # 2. Suche nach picture/source Element (moderne Lazy Loading)
+        if not img_url:
+            picture = card.find('picture')
+            if picture:
+                source = picture.find('source')
+                if source:
+                    srcset = source.get('srcset', '')
+                    if srcset and 'data:image' not in srcset:
+                        img_url = srcset.split(',')[0].split()[0]
+
+        # 3. Normales img Element
         if not img_url:
             img = card.find('img')
             if img:
@@ -297,7 +339,7 @@ class ComparisScraper(BaseScraper):
                     if srcset and 'data:image' not in srcset:
                         img_url = srcset.split(',')[0].split()[0]
 
-        # 3. Fallback: Style mit background-image
+        # 4. Fallback: Style mit background-image
         if not img_url:
             for elem in card.find_all(style=True):
                 style = elem.get('style', '')
