@@ -146,49 +146,110 @@ class ComparisScraper(BaseScraper):
                 stealth_sync(page_obj)
 
             page_obj.goto(url, wait_until='networkidle', timeout=60000)
-            page_obj.wait_for_timeout(2000)
+            page_obj.wait_for_timeout(3000)
 
             # Scroll durch die Seite um Lazy Loading zu triggern
-            for i in range(8):
-                page_obj.evaluate(f'window.scrollTo(0, {(i + 1) * 400})')
-                page_obj.wait_for_timeout(600)
+            for i in range(10):
+                page_obj.evaluate(f'window.scrollTo(0, {(i + 1) * 300})')
+                page_obj.wait_for_timeout(500)
 
-            # Warte auf Bilder
-            page_obj.wait_for_timeout(2000)
+            # Warte bis Bilder geladen sind
+            page_obj.wait_for_timeout(3000)
 
-            # Extrahiere Bild-URLs direkt via JavaScript
+            # Versuche auf Bilder zu warten
+            try:
+                page_obj.wait_for_selector('img[src*="comparis"], img[src*="cdn"], img[src*="cloudinary"], img[srcset]', timeout=5000)
+            except:
+                pass
+
+            # Extrahiere Bild-URLs direkt via JavaScript - erweiterte Suche
             image_data = page_obj.evaluate('''() => {
                 const images = {};
+
+                // Methode 1: Suche in allen Listing-Links
                 document.querySelectorAll('a[href*="/immobilien/marktplatz/details/show/"]').forEach(link => {
                     const match = link.href.match(/show\\/(\\d+)/);
-                    if (match) {
-                        const id = match[1];
-                        const img = link.querySelector('img');
-                        if (img) {
-                            // Versuche verschiedene Quellen
+                    if (!match) return;
+                    const id = match[1];
+
+                    // Suche Bild im Link oder in Parent-Containern
+                    let container = link;
+                    for (let i = 0; i < 5 && container; i++) {
+                        const imgs = container.querySelectorAll('img');
+                        for (const img of imgs) {
                             let src = img.currentSrc || img.src;
-                            if (!src || src.includes('data:image')) {
-                                src = img.dataset.src || img.dataset.lazySrc || '';
+
+                            // Prüfe srcset
+                            if ((!src || src.includes('data:')) && img.srcset) {
+                                const srcsetParts = img.srcset.split(',');
+                                if (srcsetParts.length > 0) {
+                                    src = srcsetParts[0].trim().split(' ')[0];
+                                }
                             }
-                            if (src && !src.includes('data:image') && !src.includes('placeholder')) {
+
+                            // Prüfe data Attribute
+                            if (!src || src.includes('data:')) {
+                                src = img.dataset.src || img.dataset.lazySrc || img.dataset.original || '';
+                            }
+
+                            if (src && !src.includes('data:image') && !src.includes('placeholder') && !src.includes('data:,')) {
                                 images[id] = src;
+                                return; // Found image for this listing
                             }
                         }
-                        // Fallback: background-image
-                        if (!images[id]) {
-                            const bgElem = link.querySelector('[style*="background-image"]');
-                            if (bgElem) {
-                                const style = bgElem.style.backgroundImage;
-                                const urlMatch = style.match(/url\\(['"']?([^'"')]+)['"']?\\)/);
-                                if (urlMatch) {
-                                    images[id] = urlMatch[1];
+
+                        // Check picture elements
+                        const pictures = container.querySelectorAll('picture source');
+                        for (const source of pictures) {
+                            const srcset = source.srcset;
+                            if (srcset && !srcset.includes('data:')) {
+                                const src = srcset.split(',')[0].trim().split(' ')[0];
+                                if (src) {
+                                    images[id] = src;
+                                    return;
                                 }
                             }
                         }
+
+                        // Check background images
+                        const allElems = container.querySelectorAll('*');
+                        for (const el of allElems) {
+                            const style = window.getComputedStyle(el);
+                            const bg = style.backgroundImage;
+                            if (bg && bg !== 'none' && !bg.includes('data:')) {
+                                const urlMatch = bg.match(/url\\(["']?([^"')]+)["']?\\)/);
+                                if (urlMatch && urlMatch[1]) {
+                                    images[id] = urlMatch[1];
+                                    return;
+                                }
+                            }
+                        }
+
+                        container = container.parentElement;
                     }
                 });
+
+                // Methode 2: Suche nach result-list-item data-testid
+                document.querySelectorAll('[data-testid*="result-list-item"]').forEach(card => {
+                    const link = card.querySelector('a[href*="/show/"]');
+                    if (!link) return;
+                    const match = link.href.match(/show\\/(\\d+)/);
+                    if (!match || images[match[1]]) return;
+                    const id = match[1];
+
+                    const img = card.querySelector('img');
+                    if (img) {
+                        const src = img.currentSrc || img.src || img.dataset.src;
+                        if (src && !src.includes('data:')) {
+                            images[id] = src;
+                        }
+                    }
+                });
+
                 return images;
             }''')
+
+            logger.info(f"[comparis] {len(image_data)} Bilder via JS extrahiert")
 
             content = page_obj.content()
 
