@@ -8,7 +8,7 @@ search_criteria:
   min_area_sqm: 120
   min_parking: 2
   min_outdoor_sqm: 10
-  max_travel_time_minutes: 35
+  max_travel_time_minutes: 40
   exclude_baurecht: true
 
   priority_regions:
