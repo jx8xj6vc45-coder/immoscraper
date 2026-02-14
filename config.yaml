@@ -48,6 +48,10 @@ notifications:
     enabled: false
     smtp_host: smtp.gmail.com
     smtp_port: 587
+  telegram:
+    enabled: false
+    bot_token: ""  # Von @BotFather
+    chat_id: ""    # Deine Chat-ID
   min_score_to_notify: 60
 
 scheduling:

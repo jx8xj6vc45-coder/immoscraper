@@ -16,6 +16,7 @@ from services.transport import TransportService
 from services.education import EducationService
 from services.scoring import ListingScorer
 from notifiers.email import EmailNotifier
+from services.telegram import TelegramNotifier
 from utils.deduplication import generate_listing_hash
 from utils.helpers import setup_logging, format_price, format_score_bar
 
@@ -87,6 +88,7 @@ def run_search_cycle(tier='all', parallel=True, progress_callback=None):
     education = EducationService(config)
     scorer = ListingScorer(config)
     notifier = EmailNotifier(config)
+    telegram = TelegramNotifier(config)
 
     if tier == 'all':
         scrapers = get_all_scrapers(config)
@@ -294,6 +296,7 @@ def run_search_cycle(tier='all', parallel=True, progress_callback=None):
     if high_quality:
         logger.info(f"\n🎉 {len(high_quality)} neue hochwertige Inserate gefunden!")
         notifier.send_new_listings(high_quality)
+        telegram.notify_new_listings(high_quality)
         db.mark_as_notified([l.external_id for l in high_quality])
     else:
         logger.info("Keine neuen hochwertigen Inserate gefunden.")
