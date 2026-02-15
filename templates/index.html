@@ -229,7 +229,7 @@
                         <span class="platform-light {{ 'success' if data.success else 'error' }}"></span>
                         <span class="platform-name">{{ platform }}</span>
                         {% if data.success %}
-                        <span class="platform-count">{{ data.count }} gefunden</span>
+                        <span class="platform-count">{{ data.count }} / {{ data.new }} neu</span>
                         {% else %}
                         <button class="platform-debug" onclick="copyDebug('{{ platform }}', '{{ data.error | e }}')">Debug</button>
                         {% endif %}
@@ -634,7 +634,7 @@
                                 <span class="platform-light ${lightClass}"></span>
                                 <span class="platform-name">${platform}</span>`;
                             if (d.success) {
-                                html += `<span class="platform-count">${d.count} gefunden</span>`;
+                                html += `<span class="platform-count">${d.count} / ${d.new || 0} neu</span>`;
                             } else {
                                 const escapedError = (d.error || '').replace(/'/g, "\\'");
                                 html += `<button class="platform-debug" onclick="copyDebug('${platform}', '${escapedError}')">Debug</button>`;
