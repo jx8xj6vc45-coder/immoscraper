@@ -112,8 +112,17 @@ class TelegramNotifier:
         if listing.city or listing.address:
             message += f"📍 {listing.address or listing.city}\n"
 
+        # Score Details
         if listing.total_score:
-            message += f"📊 Score: {listing.total_score}/100 (Grade {listing.grade})\n"
+            message += f"\n📊 <b>Score: {listing.total_score}/100 (Grade {listing.grade})</b>\n"
+
+            score_details = []
+            if hasattr(listing, 'steuerfuss') and listing.steuerfuss:
+                message += f"💸 Steuerfuss: {listing.steuerfuss}%\n"
+            if hasattr(listing, 'maturitaets_quote') and listing.maturitaets_quote:
+                message += f"🎓 Maturitätsquote: {listing.maturitaets_quote}%\n"
+            if listing.travel_time_to_hb:
+                message += f"🚆 ÖV zum HB: {listing.travel_time_to_hb} Min\n"
 
         message += f"\n🔗 <a href=\"{listing.url}\">Inserat öffnen</a>"
         message += f"\n<i>via {listing.platform}</i>"
