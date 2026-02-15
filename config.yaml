@@ -52,7 +52,7 @@ notifications:
     enabled: false
     bot_token: ""  # Von @BotFather
     chat_id: ""    # Deine Chat-ID
-  min_score_to_notify: 60
+  min_score_to_notify: 50
 
 scheduling:
   tier1_interval_minutes: 15
