@@ -17,9 +17,23 @@ class TelegramNotifier:
         self.chat_id = telegram_config.get('chat_id', '')
         self.min_score = config.get('notifications', {}).get('min_score_to_notify', 60)
 
+        # Debug-Logging bei Initialisierung
+        if not self.enabled:
+            logger.warning("[telegram] DEAKTIVIERT - setze 'enabled: true' in config.yaml")
+        elif not self.bot_token:
+            logger.warning("[telegram] Kein bot_token konfiguriert!")
+        elif not self.chat_id:
+            logger.warning("[telegram] Keine chat_id konfiguriert!")
+        else:
+            logger.info(f"[telegram] Aktiv (chat_id: {str(self.chat_id)[-4:]}...)")
+
     def send_message(self, text: str, parse_mode: str = 'HTML') -> bool:
         """Sendet eine Nachricht an den konfigurierten Chat."""
-        if not self.enabled or not self.bot_token or not self.chat_id:
+        if not self.enabled:
+            logger.warning("[telegram] Nachricht nicht gesendet - Telegram deaktiviert")
+            return False
+        if not self.bot_token or not self.chat_id:
+            logger.warning("[telegram] Nachricht nicht gesendet - Token oder Chat-ID fehlt")
             return False
 
         try:
@@ -31,7 +45,10 @@ class TelegramNotifier:
                 'disable_web_page_preview': False
             }
             response = requests.post(url, data=data, timeout=10)
-            response.raise_for_status()
+            if not response.ok:
+                logger.error(f"[telegram] API-Fehler: {response.status_code} - {response.text}")
+                return False
+            logger.info("[telegram] Nachricht erfolgreich gesendet!")
             return True
         except Exception as e:
             logger.error(f"[telegram] Fehler beim Senden: {e}")
@@ -44,20 +61,21 @@ class TelegramNotifier:
             Anzahl gesendeter Nachrichten
         """
         if not self.enabled:
+            logger.warning(f"[telegram] {len(listings)} Inserate nicht gesendet - Telegram deaktiviert!")
             return 0
+
+        logger.info(f"[telegram] Sende {len(listings)} Inserate...")
 
         sent = 0
         for listing in listings:
-            # Nur Inserate mit ausreichendem Score
-            if listing.total_score and listing.total_score < self.min_score:
-                continue
-
             message = self._format_listing(listing)
             if self.send_message(message):
                 sent += 1
 
         if sent > 0:
-            logger.info(f"[telegram] {sent} Benachrichtigungen gesendet")
+            logger.info(f"[telegram] {sent}/{len(listings)} Benachrichtigungen gesendet")
+        else:
+            logger.warning(f"[telegram] Keine Nachrichten gesendet (0/{len(listings)})")
 
         return sent
 

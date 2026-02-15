@@ -293,13 +293,27 @@ def run_search_cycle(tier='all', parallel=True, progress_callback=None):
     min_score = config.get('notifications', {}).get('min_score_to_notify', 60)
     high_quality = [l for l in all_new_listings if (l.total_score or 0) >= min_score]
 
+    logger.info(f"\n📊 Benachrichtigungs-Check:")
+    logger.info(f"  Neue Inserate total: {len(all_new_listings)}")
+    logger.info(f"  Min. Score für Benachrichtigung: {min_score}")
+    if all_new_listings:
+        scores = [(l.title[:30], l.total_score or 0) for l in all_new_listings]
+        for title, score in scores:
+            status = "✅" if score >= min_score else "❌"
+            logger.info(f"  {status} Score {score}: {title}...")
+    logger.info(f"  Davon Score >= {min_score}: {len(high_quality)}")
+
     if high_quality:
         logger.info(f"\n🎉 {len(high_quality)} neue hochwertige Inserate gefunden!")
         notifier.send_new_listings(high_quality)
-        telegram.notify_new_listings(high_quality)
+        sent = telegram.notify_new_listings(high_quality)
+        logger.info(f"📱 Telegram: {sent} Nachrichten gesendet")
         db.mark_as_notified([l.external_id for l in high_quality])
     else:
-        logger.info("Keine neuen hochwertigen Inserate gefunden.")
+        logger.info("Keine neuen Inserate mit Score >= %d gefunden.", min_score)
+        if all_new_listings:
+            logger.info("(Es gibt %d neue Inserate, aber alle haben Score < %d)",
+                        len(all_new_listings), min_score)
 
     # Statistik
     stats = db.get_stats()
