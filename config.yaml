@@ -3,11 +3,11 @@
 headless: true
 
 search_criteria:
-  max_price: 2200000
+  max_price: 2500000
   min_rooms: 4.5
   min_area_sqm: 120
   min_parking: 2
-  min_outdoor_sqm: 10
+  require_outdoor: true  # Balkon, Terrasse oder Garten erforderlich
   max_travel_time_minutes: 40
   exclude_baurecht: true
 

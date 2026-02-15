@@ -838,9 +838,10 @@ class BaseScraper(ABC):
 
     def meets_criteria(self, listing: Listing) -> bool:
         """Prüft ob ein Inserat die Mindestkriterien erfüllt."""
-        max_price = self.criteria.get('max_price', 2_200_000)
+        max_price = self.criteria.get('max_price', 2_500_000)
         min_rooms = self.criteria.get('min_rooms', 4.5)
         min_area = self.criteria.get('min_area_sqm', 120)
+        require_outdoor = self.criteria.get('require_outdoor', False)
 
         if listing.price and listing.price > max_price:
             return False
@@ -849,6 +850,11 @@ class BaseScraper(ABC):
         if listing.area_sqm and listing.area_sqm < min_area:
             return False
         if listing.ownership_type and listing.ownership_type == 'baurecht_only':
+            return False
+
+        # Outdoor-Check: Nur filtern wenn explizit KEIN Outdoor vorhanden
+        # (Bei fehlender Info wird das Inserat behalten)
+        if require_outdoor and listing.outdoor_type == 'none':
             return False
 
         return True
