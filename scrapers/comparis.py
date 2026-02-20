@@ -292,11 +292,20 @@ class ComparisScraper(BaseScraper):
         soup = BeautifulSoup(content, 'lxml')
         image_data = image_data or {}
 
-        # Comparis nutzt data-testid für Listing-Cards
-        cards = soup.find_all('div', {'data-testid': re.compile(r'result-list-item')})
+        # Comparis nutzt verschiedene Selektoren (React-basiert, ändert häufig)
+        cards = soup.find_all('div', {'data-testid': re.compile(r'result-list-item|listing-item|property-card')})
+
         if not cards:
-            # Fallback: Suche nach Listing-Containern
-            cards = soup.find_all('a', href=re.compile(r'/immobilien/marktplatz/details/show/'))
+            # Fallback 1: Links zu Immobilien-Details
+            cards = soup.find_all('a', href=re.compile(r'/immobilien/.*/(show|detail|view)/'))
+
+        if not cards:
+            # Fallback 2: Generische Property-Container
+            cards = soup.find_all(['article', 'div'], class_=re.compile(r'listing|property|result.*item|card.*property', re.I))
+
+        if not cards:
+            # Fallback 3: Alle Links die auf Immobilien-IDs verweisen
+            cards = soup.find_all('a', href=re.compile(r'/immobilien/.*\d{5,}'))
 
         logger.info(f"[comparis] {len(cards)} Listing-Cards gefunden, {len(image_data)} Bilder via JS")
 

@@ -283,9 +283,13 @@ class FlatfoxScraper(BaseScraper):
                 href = link['href']
 
         if href:
-            match = re.search(r'/flat/(\d+)', href)
+            # Unterstütze sowohl /flat/123 als auch /flat/some-slug/
+            match = re.search(r'/flat/([^/?]+)', href)
             if match:
                 listing.external_id = f"ff-{match.group(1)}"
+            else:
+                # Fallback: Hash der URL
+                listing.external_id = f"ff-{abs(hash(href))}"
             listing.url = f"{self.BASE_URL}{href}" if href.startswith('/') else href
 
         if not listing.external_id:

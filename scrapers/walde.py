@@ -159,11 +159,13 @@ class WaldeScraper(BaseScraper):
         soup = BeautifulSoup(content, 'lxml')
 
         # Walde verwendet verschiedene Card-Strukturen
-        cards = soup.find_all('a', href=re.compile(r'/immobilien/\d+'))
+        cards = soup.find_all('a', href=re.compile(r'/immobilien/'))
         if not cards:
-            cards = soup.find_all('article', class_=re.compile(r'property|listing', re.I))
+            cards = soup.find_all('a', href=re.compile(r'/objekt|/property|/liegenschaft'))
         if not cards:
-            cards = soup.find_all('div', class_=re.compile(r'property|listing|result', re.I))
+            cards = soup.find_all('article', class_=re.compile(r'property|listing|object|teaser', re.I))
+        if not cards:
+            cards = soup.find_all('div', class_=re.compile(r'property|listing|result|object.*card', re.I))
 
         logger.info(f"[walde] {len(cards)} Listing-Cards gefunden")
 
@@ -198,8 +200,8 @@ class WaldeScraper(BaseScraper):
         else:
             listing.url = href
 
-        # ID aus URL extrahieren
-        id_match = re.search(r'/immobilien/(\d+)', href)
+        # ID aus URL extrahieren - verschiedene Formate
+        id_match = re.search(r'/immobilien/([^/?]+)', href) or re.search(r'/objekt/([^/?]+)', href)
         if id_match:
             listing.external_id = f"walde-{id_match.group(1)}"
         else:

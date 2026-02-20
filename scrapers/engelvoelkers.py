@@ -164,10 +164,16 @@ class EngelVoelkersScraper(BaseScraper):
         listings = []
         soup = BeautifulSoup(content, 'lxml')
 
-        # Engel & Völkers verwendet article oder div Cards
-        cards = soup.find_all('a', href=re.compile(r'/objekt/'))
-        if not cards:
-            cards = soup.find_all('div', class_=re.compile(r'property|listing|result', re.I))
+        # Engel & Völkers verwendet verschiedene Strukturen
+        cards = soup.find_all('a', href=re.compile(r'/objekt/|/property/|/expose/'))
+
+        # Fallback: Alle Links die auf Immobilien hindeuten
+        if len(cards) < 5:
+            cards = soup.find_all('a', href=re.compile(r'/(buy|kauf|immobilie|wohnung|haus)/'))
+
+        # Fallback: Property Cards als Container
+        if len(cards) < 5:
+            cards = soup.find_all(['article', 'div'], class_=re.compile(r'property|listing|result|expose|teaser', re.I))
 
         logger.info(f"[engelvoelkers] {len(cards)} Listing-Cards gefunden")
 
