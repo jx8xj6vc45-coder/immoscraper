@@ -344,7 +344,9 @@ class HomegateScraper(BaseScraper):
     def _find_listings_in_json(self, data: dict) -> list:
         """Findet Listings-Array in verschachteltem JSON."""
         try:
-            return data['resultList']['search']['fullSearch']['result']['listings']
+            result = data['resultList']['search']['fullSearch']['result']['listings']
+            logger.info(f"[homegate] Listings gefunden via direkt: resultList.search.fullSearch.result.listings")
+            return result
         except (KeyError, TypeError):
             pass
 
@@ -360,11 +362,20 @@ class HomegateScraper(BaseScraper):
                 for key in path:
                     obj = obj[key]
                 if isinstance(obj, list) and len(obj) > 0:
+                    logger.info(f"[homegate] Listings gefunden via Pfad: {'.'.join(path)}")
+                    # Log first item structure
+                    if obj and isinstance(obj[0], dict):
+                        logger.info(f"[homegate] Erstes Item Keys: {list(obj[0].keys())[:8]}")
                     return obj
             except (KeyError, TypeError):
                 continue
 
-        return self._find_key_recursive(data, 'listings', max_depth=6)
+        result = self._find_key_recursive(data, 'listings', max_depth=6)
+        if result:
+            logger.info(f"[homegate] Listings gefunden via rekursive Suche")
+            if result and isinstance(result[0], dict):
+                logger.info(f"[homegate] Erstes Item Keys: {list(result[0].keys())[:8]}")
+        return result
 
     def _find_key_recursive(self, obj, target_key, max_depth=6, depth=0):
         """Sucht rekursiv nach einem Key der eine Liste enthält."""
@@ -383,6 +394,11 @@ class HomegateScraper(BaseScraper):
         """Konvertiert ein JSON-Item in ein Listing-Objekt."""
         try:
             inner = item.get('listing', item)
+
+            # Debug: Log structure
+            item_id = inner.get('id', 'unknown')
+            has_listing_key = 'listing' in item
+            logger.info(f"[homegate] Item: id={item_id}, has_listing_key={has_listing_key}, inner_keys={list(inner.keys())[:6]}")
 
             listing = Listing()
             listing.external_id = f"hg-{inner.get('id', '')}"
@@ -423,7 +439,10 @@ class HomegateScraper(BaseScraper):
             listing.rooms = chars.get('numberOfRooms')
             living_space = chars.get('livingSpace')
             if living_space:
-                listing.area_sqm = int(living_space)
+                try:
+                    listing.area_sqm = int(float(living_space))
+                except (ValueError, TypeError):
+                    pass
 
             # URL
             listing.url = f"{self.BASE_URL}/buy/{inner.get('id', '')}"
@@ -443,8 +462,9 @@ class HomegateScraper(BaseScraper):
             else:
                 listing.property_type = 'wohnung'
 
+            logger.info(f"[homegate] Listing erstellt: {listing.external_id} - {listing.title[:40] if listing.title else 'no title'}")
             return listing
 
         except Exception as e:
-            logger.debug(f"[homegate] Konvertierung fehlgeschlagen: {e}")
+            logger.warning(f"[homegate] Konvertierung fehlgeschlagen: {e} - item keys: {list(item.keys())[:5] if isinstance(item, dict) else type(item)}")
             return None

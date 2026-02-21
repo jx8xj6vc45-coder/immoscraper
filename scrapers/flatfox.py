@@ -32,10 +32,10 @@ class FlatfoxScraper(BaseScraper):
         offset = (page - 1) * 20
 
         # Flatfox API für Kaufobjekte in Zürich
+        # offer_type=SALE = Kaufobjekte (nicht Miete)
         url = (
             f"{self.BASE_URL}/de/search/"
             f"?east=8.984375&north=47.694974&south=47.159840&west=8.349609"  # Kanton ZH Bounding Box
-            f"&object_category=BUY"
             f"&offer_type=SALE"
             f"&min_rooms={int(min_rooms)}"
             f"&max_price={max_price}"
