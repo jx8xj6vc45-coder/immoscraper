@@ -146,57 +146,19 @@ class ComparisScraper(BaseScraper):
                 stealth_sync(page_obj)
 
             page_obj.goto(url, wait_until='networkidle', timeout=60000)
-            page_obj.wait_for_timeout(5000)
-
-            # Versuche JSON-State aus der Seite zu extrahieren
-            self._json_state = page_obj.evaluate('''() => {
-                // Methode 1: __NEXT_DATA__ (Next.js)
-                const nextData = document.getElementById('__NEXT_DATA__');
-                if (nextData) {
-                    try { return JSON.parse(nextData.textContent); } catch(e) {}
-                }
-
-                // Methode 2: window.__INITIAL_STATE__
-                if (window.__INITIAL_STATE__) {
-                    return window.__INITIAL_STATE__;
-                }
-
-                // Methode 3: window.__NUXT__ (Nuxt/Vue)
-                if (window.__NUXT__) {
-                    return window.__NUXT__;
-                }
-
-                // Methode 4: Comparis-spezifisch
-                if (window.__PRELOADED_STATE__) {
-                    return window.__PRELOADED_STATE__;
-                }
-
-                // Methode 5: Suche nach beliebigem State mit Listings
-                for (const key of Object.keys(window)) {
-                    if (key.startsWith('__') && window[key] && typeof window[key] === 'object') {
-                        const str = JSON.stringify(window[key]);
-                        if (str.includes('"listings"') || str.includes('"results"') || str.includes('"items"')) {
-                            return window[key];
-                        }
-                    }
-                }
-
-                return null;
-            }''')
-
-            if self._json_state:
-                logger.info(f"[comparis] JSON-State gefunden")
+            page_obj.wait_for_timeout(3000)
 
             # Scroll durch die Seite um Lazy Loading zu triggern
-            for i in range(5):
-                page_obj.evaluate(f'window.scrollTo(0, {(i + 1) * 500})')
-                page_obj.wait_for_timeout(300)
+            for i in range(10):
+                page_obj.evaluate(f'window.scrollTo(0, {(i + 1) * 300})')
+                page_obj.wait_for_timeout(500)
 
-            page_obj.wait_for_timeout(2000)
+            # Warte bis Bilder geladen sind
+            page_obj.wait_for_timeout(3000)
 
-            # Versuche auf Listing-Cards zu warten
+            # Versuche auf Bilder zu warten
             try:
-                page_obj.wait_for_selector('[class*="result"], [class*="listing"], [class*="property"], a[href*="/show/"]', timeout=5000)
+                page_obj.wait_for_selector('img[src*="comparis"], img[src*="cdn"], img[src*="cloudinary"], img[srcset]', timeout=5000)
             except:
                 pass
 
@@ -325,47 +287,25 @@ class ComparisScraper(BaseScraper):
                     pass
 
     def parse_listings(self, content: str, image_data: dict = None) -> List[Listing]:
-        """Parst Listings aus dem HTML-Content oder JSON-State."""
+        """Parst Listings aus dem HTML-Content."""
         listings = []
-        image_data = image_data or {}
-
-        # Zuerst: Versuche JSON-State zu parsen
-        json_state = getattr(self, '_json_state', None)
-        if json_state:
-            listings = self._parse_json_state(json_state)
-            if listings:
-                logger.info(f"[comparis] {len(listings)} Listings via JSON-State")
-                return listings
-
-        # Fallback: HTML parsing
         soup = BeautifulSoup(content, 'lxml')
-
-        # Versuche __NEXT_DATA__ aus HTML zu extrahieren
-        next_data = soup.find('script', id='__NEXT_DATA__')
-        if next_data:
-            try:
-                data = json.loads(next_data.string)
-                listings = self._parse_json_state(data)
-                if listings:
-                    logger.info(f"[comparis] {len(listings)} Listings via __NEXT_DATA__")
-                    return listings
-            except:
-                pass
+        image_data = image_data or {}
 
         # Comparis nutzt verschiedene Selektoren (React-basiert, ändert häufig)
         cards = soup.find_all('div', {'data-testid': re.compile(r'result-list-item|listing-item|property-card')})
 
         if not cards:
             # Fallback 1: Links zu Immobilien-Details
-            cards = soup.find_all('a', href=re.compile(r'/immobilien/.*/show/'))
+            cards = soup.find_all('a', href=re.compile(r'/immobilien/.*/(show|detail|view)/'))
 
         if not cards:
-            # Fallback 2: Alle Links zu Immobilien-Seiten
-            cards = soup.find_all('a', href=re.compile(r'/immobilien/marktplatz'))
+            # Fallback 2: Generische Property-Container
+            cards = soup.find_all(['article', 'div'], class_=re.compile(r'listing|property|result.*item|card.*property', re.I))
 
         if not cards:
-            # Fallback 3: Generische Property-Container
-            cards = soup.find_all(['article', 'div'], class_=re.compile(r'listing|property|result.*item|card', re.I))
+            # Fallback 3: Alle Links die auf Immobilien-IDs verweisen
+            cards = soup.find_all('a', href=re.compile(r'/immobilien/.*\d{5,}'))
 
         logger.info(f"[comparis] {len(cards)} Listing-Cards gefunden, {len(image_data)} Bilder via JS")
 
@@ -487,116 +427,3 @@ class ComparisScraper(BaseScraper):
             listing.image_url = img_url
 
         return listing
-
-    def _parse_json_state(self, data: dict) -> List[Listing]:
-        """Parst Listings aus dem JSON-State."""
-        listings = []
-
-        # Suche nach Listings in verschiedenen möglichen Pfaden
-        items = self._find_listings_in_json(data)
-        if not items:
-            return listings
-
-        for item in items:
-            listing = self._json_item_to_listing(item)
-            if listing:
-                listings.append(listing)
-
-        return listings
-
-    def _find_listings_in_json(self, data, depth=0) -> list:
-        """Sucht rekursiv nach einem Array mit Listing-Daten."""
-        if depth > 10:
-            return []
-
-        if isinstance(data, list) and len(data) > 0:
-            # Prüfe ob das erste Item wie ein Listing aussieht
-            first = data[0]
-            if isinstance(first, dict) and any(k in first for k in ['id', 'listingId', 'propertyId', 'url', 'price']):
-                return data
-
-        if isinstance(data, dict):
-            # Bekannte Keys für Listings
-            for key in ['listings', 'results', 'items', 'properties', 'ads', 'searchResults']:
-                if key in data:
-                    result = self._find_listings_in_json(data[key], depth + 1)
-                    if result:
-                        return result
-
-            # Rekursiv durch alle Values
-            for value in data.values():
-                result = self._find_listings_in_json(value, depth + 1)
-                if result:
-                    return result
-
-        return []
-
-    def _json_item_to_listing(self, item: dict) -> Listing:
-        """Konvertiert ein JSON-Item in ein Listing-Objekt."""
-        try:
-            listing = Listing()
-
-            # ID
-            listing_id = str(item.get('id', item.get('listingId', item.get('adId', ''))))
-            if not listing_id:
-                return None
-
-            listing.external_id = f"cp-{listing_id}"
-
-            # URL
-            if item.get('url'):
-                listing.url = item['url']
-                if listing.url.startswith('/'):
-                    listing.url = f"{self.BASE_URL}{listing.url}"
-            else:
-                listing.url = f"{self.BASE_URL}/immobilien/marktplatz/details/show/{listing_id}"
-
-            # Titel
-            listing.title = item.get('title', item.get('name', ''))
-
-            # Preis
-            price = item.get('price', item.get('sellingPrice', item.get('purchasePrice')))
-            if isinstance(price, dict):
-                price = price.get('value', price.get('amount'))
-            if price:
-                listing.price = int(float(str(price).replace("'", "").replace(",", "")))
-
-            # Zimmer
-            rooms = item.get('numberOfRooms', item.get('rooms', item.get('roomCount')))
-            if rooms:
-                listing.rooms = float(rooms)
-
-            # Fläche
-            area = item.get('livingSpace', item.get('area', item.get('livingArea')))
-            if area:
-                listing.area_sqm = int(float(area))
-
-            # Adresse
-            addr = item.get('address', item.get('location', {}))
-            if isinstance(addr, dict):
-                listing.city = addr.get('city', addr.get('locality', addr.get('place', '')))
-                plz = addr.get('zip', addr.get('postalCode', ''))
-                street = addr.get('street', '')
-                listing.address = f"{street}, {plz} {listing.city}".strip(', ')
-            elif isinstance(addr, str):
-                listing.address = addr
-                # Stadt aus Adresse extrahieren
-                match = re.search(r'\d{4}\s+(.+)', addr)
-                if match:
-                    listing.city = match.group(1)
-
-            # Bild
-            images = item.get('images', item.get('pictures', []))
-            if images:
-                if isinstance(images[0], dict):
-                    listing.image_url = images[0].get('url', images[0].get('src', ''))
-                elif isinstance(images[0], str):
-                    listing.image_url = images[0]
-            if not listing.image_url:
-                listing.image_url = item.get('imageUrl', item.get('image', ''))
-
-            return listing
-
-        except Exception as e:
-            logger.debug(f"[comparis] JSON-Konvertierung fehlgeschlagen: {e}")
-            return None
