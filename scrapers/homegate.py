@@ -343,44 +343,28 @@ class HomegateScraper(BaseScraper):
 
     def _find_listings_in_json(self, data: dict) -> list:
         """Findet Listings-Array in verschachteltem JSON."""
-        # Direkte Pfade die bei Homegate üblich sind
-        paths = [
-            ['resultList', 'search', 'fullSearch', 'result', 'listings'],
-            ['resultList', 'listings'],
-            ['search', 'listings'],
-            ['listings'],
-            ['results'],
-            ['items'],
+        try:
+            return data['resultList']['search']['fullSearch']['result']['listings']
+        except (KeyError, TypeError):
+            pass
+
+        for path in [
             ['props', 'pageProps', 'resultList', 'search', 'fullSearch', 'result', 'listings'],
             ['props', 'pageProps', 'listings'],
             ['props', 'pageProps', 'searchResult', 'listings'],
-            ['props', 'pageProps', 'results'],
-            ['props', 'pageProps', 'initialData', 'listings'],
             ['searchResult', 'listings'],
             ['data', 'searchResult', 'listings'],
-            ['data', 'listings'],
-            ['data', 'results'],
-        ]
-
-        for path in paths:
+        ]:
             obj = data
             try:
                 for key in path:
                     obj = obj[key]
                 if isinstance(obj, list) and len(obj) > 0:
-                    logger.debug(f"[homegate] Listings gefunden via Pfad: {path}")
                     return obj
             except (KeyError, TypeError):
                 continue
 
-        # Rekursive Suche als Fallback
-        for key in ['listings', 'results', 'items', 'properties']:
-            result = self._find_key_recursive(data, key, max_depth=8)
-            if result:
-                logger.debug(f"[homegate] Listings gefunden via rekursive Suche: {key}")
-                return result
-
-        return []
+        return self._find_key_recursive(data, 'listings', max_depth=6)
 
     def _find_key_recursive(self, obj, target_key, max_depth=6, depth=0):
         """Sucht rekursiv nach einem Key der eine Liste enthält."""
@@ -398,96 +382,63 @@ class HomegateScraper(BaseScraper):
     def _item_to_listing(self, item: dict) -> Listing:
         """Konvertiert ein JSON-Item in ein Listing-Objekt."""
         try:
-            # Homegate verschachtelt mal in 'listing', mal nicht
             inner = item.get('listing', item)
 
             listing = Listing()
+            listing.external_id = f"hg-{inner.get('id', '')}"
 
-            # ID - verschiedene mögliche Keys
-            listing_id = (
-                inner.get('id') or
-                inner.get('listingId') or
-                inner.get('propertyId') or
-                item.get('id') or
-                ''
-            )
-            if not listing_id:
-                logger.debug(f"[homegate] Kein ID gefunden in: {list(inner.keys())[:10]}")
-                return None
-
-            listing.external_id = f"hg-{listing_id}"
-
-            # Lokalisierung - verschiedene Strukturen
+            # Lokalisierung
             localization = inner.get('localization', {})
             primary_key = localization.get('primary', 'de')
-            primary_loc = localization.get(primary_key, localization.get('de', {}))
+            primary_loc = localization.get(primary_key, {})
             text_data = primary_loc.get('text', {})
 
-            # Titel - Fallbacks
-            listing.title = (
-                text_data.get('title') or
-                inner.get('title') or
-                inner.get('name') or
-                item.get('title') or
-                ''
-            )
+            listing.title = text_data.get('title', '')
+            listing.description = text_data.get('description', '')
 
-            listing.description = text_data.get('description', inner.get('description', ''))
+            # Adresse
+            addr = inner.get('address', {})
+            loc = addr.get('locality', '')
+            plz = addr.get('postalCode', '')
+            street = addr.get('street', '')
+            listing.city = loc
+            listing.address = f"{street}, {plz} {loc}".strip(', ')
 
-            # Adresse - verschiedene Strukturen
-            addr = inner.get('address', inner.get('location', {}))
-            listing.city = addr.get('locality', addr.get('city', addr.get('place', '')))
-            plz = addr.get('postalCode', addr.get('zip', addr.get('zipCode', '')))
-            street = addr.get('street', addr.get('streetAddress', ''))
-            listing.address = f"{street}, {plz} {listing.city}".strip(', ')
+            geo = addr.get('geoCoordinates', {})
+            listing.latitude = geo.get('latitude')
+            listing.longitude = geo.get('longitude')
 
-            # Koordinaten
-            geo = addr.get('geoCoordinates', addr.get('geo', addr.get('coordinates', {})))
-            listing.latitude = geo.get('latitude', geo.get('lat'))
-            listing.longitude = geo.get('longitude', geo.get('lng', geo.get('lon')))
-
-            # Preise - verschiedene Strukturen
+            # Preise - Kaufobjekte: prices.buy.price
             prices = inner.get('prices', {})
-            buy_price = prices.get('buy', prices.get('purchase', {}))
+            buy_price = prices.get('buy', {})
             if isinstance(buy_price, dict):
-                listing.price = buy_price.get('price', buy_price.get('amount'))
-            if not listing.price:
-                # Direkter Preis
-                listing.price = inner.get('price', inner.get('sellingPrice', item.get('price')))
+                listing.price = buy_price.get('price')
             if not listing.price:
                 rent_price = prices.get('rent', {})
                 if isinstance(rent_price, dict):
                     listing.price = rent_price.get('gross')
 
             # Eigenschaften
-            chars = inner.get('characteristics', inner.get('features', {}))
-            listing.rooms = chars.get('numberOfRooms', chars.get('rooms', inner.get('rooms')))
-            living_space = chars.get('livingSpace', chars.get('area', inner.get('livingSpace')))
+            chars = inner.get('characteristics', {})
+            listing.rooms = chars.get('numberOfRooms')
+            living_space = chars.get('livingSpace')
             if living_space:
-                listing.area_sqm = int(float(living_space))
+                listing.area_sqm = int(living_space)
 
             # URL
-            listing.url = f"{self.BASE_URL}/buy/{listing_id}"
+            listing.url = f"{self.BASE_URL}/buy/{inner.get('id', '')}"
 
-            # Bilder - verschiedene Strukturen
-            attachments = primary_loc.get('attachments', []) or inner.get('images', []) or []
+            # Bilder
+            attachments = primary_loc.get('attachments', []) or []
             for att in attachments:
-                img_url = None
-                if isinstance(att, dict):
-                    if att.get('type') == 'IMAGE' or 'url' in att:
-                        img_url = att.get('url', att.get('src'))
-                elif isinstance(att, str):
-                    img_url = att
-                if img_url:
-                    listing.image_url = img_url
+                if att.get('type') == 'IMAGE' and att.get('url'):
+                    listing.image_url = att['url']
                     break
 
             # Typ
-            categories = inner.get('categories', inner.get('category', []))
-            if isinstance(categories, str):
-                categories = [categories]
+            categories = inner.get('categories', [])
             cat_str = str(categories).upper()
-            if 'HOUSE' in cat_str or 'VILLA' in cat_str or 'EINFAMILIEN' in cat_str:
+            if 'HOUSE' in cat_str or 'VILLA' in cat_str:
                 listing.property_type = 'einfamilienhaus'
             else:
                 listing.property_type = 'wohnung'

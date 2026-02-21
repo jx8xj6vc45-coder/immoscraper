@@ -35,7 +35,8 @@ class FlatfoxScraper(BaseScraper):
         url = (
             f"{self.BASE_URL}/de/search/"
             f"?east=8.984375&north=47.694974&south=47.159840&west=8.349609"  # Kanton ZH Bounding Box
-            f"&object_category=SALE"
+            f"&object_category=BUY"
+            f"&offer_type=SALE"
             f"&min_rooms={int(min_rooms)}"
             f"&max_price={max_price}"
             f"&ordering=-created"
