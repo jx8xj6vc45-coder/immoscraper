@@ -43,6 +43,9 @@ class FlatfoxScraper(BaseScraper):
         )
         if page > 1:
             url += f"&offset={offset}"
+
+        # Debug: Log der verwendeten URL
+        logger.info(f"[flatfox] URL: {url}")
         return url
 
     def search(self) -> List[Listing]:
@@ -198,7 +201,8 @@ class FlatfoxScraper(BaseScraper):
             except Exception as e:
                 logger.debug(f"[flatfox] JSON-Parsing fehlgeschlagen: {e}")
 
-        # Fallback: HTML-Parsing
+        # Fallback: HTML-Parsing (ACHTUNG: HTML enthält keinen offer_type!)
+        logger.warning("[flatfox] Fallback auf HTML-Parsing - offer_type kann nicht verifiziert werden!")
         soup = BeautifulSoup(content, 'lxml')
 
         # Flatfox verwendet listing-cards
@@ -225,6 +229,11 @@ class FlatfoxScraper(BaseScraper):
 
             listing.external_id = f"ff-{item.get('pk', item.get('id', ''))}"
             listing.title = item.get('title', item.get('short_title', ''))
+
+            # Debug: Log offer_type um zu verifizieren ob SALE (Kauf) oder RENT (Miete)
+            offer_type = item.get('offer_type', 'UNKNOWN')
+            object_category = item.get('object_category', 'UNKNOWN')
+            logger.info(f"[flatfox] Listing {listing.external_id}: offer_type={offer_type}, object_category={object_category}")
 
             # Preis
             listing.price = item.get('price_display', item.get('price'))

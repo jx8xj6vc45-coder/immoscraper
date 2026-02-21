@@ -36,6 +36,9 @@ class HomegateScraper(BaseScraper):
         )
         if page > 1:
             url += f"&ep={page}"
+
+        # Debug: Log der verwendeten URL
+        logger.info(f"[homegate] URL: {url} (min_rooms_criteria={min_rooms}, ac_param={min_rooms_int})")
         return url
 
     def search(self) -> List[Listing]:
@@ -460,6 +463,10 @@ class HomegateScraper(BaseScraper):
                     listing.area_sqm = int(float(living_space))
                 except (ValueError, TypeError):
                     pass
+
+            # Debug: Log raw room data from JSON
+            logger.info(f"[homegate] Raw JSON für {listing.external_id}: numberOfRooms={chars.get('numberOfRooms')}, "
+                       f"all_char_keys={list(chars.keys())}")
 
             # URL
             listing.url = f"{self.BASE_URL}/buy/{inner.get('id', '')}"
