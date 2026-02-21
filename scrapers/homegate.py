@@ -178,6 +178,23 @@ class HomegateScraper(BaseScraper):
                 listing.platform = self.get_name()
                 if self.meets_criteria(listing):
                     filtered.append(listing)
+                else:
+                    # Debug: Warum gefiltert?
+                    max_price = self.criteria.get('max_price', 2_500_000)
+                    min_rooms = self.criteria.get('min_rooms', 4.5)
+                    min_area = self.criteria.get('min_area_sqm', 120)
+                    reasons = []
+                    if listing.price and listing.price > max_price:
+                        reasons.append(f"Preis {listing.price} > {max_price}")
+                    if listing.rooms and listing.rooms < min_rooms:
+                        reasons.append(f"Zimmer {listing.rooms} < {min_rooms}")
+                    if listing.area_sqm and listing.area_sqm < min_area:
+                        reasons.append(f"Fläche {listing.area_sqm} < {min_area}")
+                    if listing.outdoor_type == 'none':
+                        reasons.append("Kein Outdoor")
+                    if not reasons:
+                        reasons.append(f"price={listing.price}, rooms={listing.rooms}, area={listing.area_sqm}")
+                    logger.info(f"[homegate] Gefiltert: {listing.external_id} - {', '.join(reasons)}")
 
             return filtered
 
