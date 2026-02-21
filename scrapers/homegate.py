@@ -39,6 +39,8 @@ class HomegateScraper(BaseScraper):
 
         # Debug: Log der verwendeten URL
         logger.info(f"[homegate] URL: {url} (min_rooms_criteria={min_rooms}, ac_param={min_rooms_int})")
+        logger.info(f"[homegate] ACHTUNG: ac={min_rooms_int} scheint ignoriert zu werden! "
+                   f"Bitte manuell verifizieren: Öffne die URL im Browser und prüfe ob Zimmerfilter funktioniert")
         return url
 
     def search(self) -> List[Listing]:

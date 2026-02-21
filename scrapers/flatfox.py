@@ -133,6 +133,25 @@ class FlatfoxScraper(BaseScraper):
 
             # Versuche JSON-Daten zu extrahieren
             try:
+                # Debug: Welche JSON-Scripts gibt es?
+                json_debug = page_obj.evaluate('''
+                    () => {
+                        const scripts = document.querySelectorAll('script[type="application/json"]');
+                        const info = [];
+                        for (const s of scripts) {
+                            try {
+                                const data = JSON.parse(s.textContent);
+                                const keys = Object.keys(data).slice(0, 10);
+                                info.push({keys: keys, hasResults: !!data.results, hasObjects: !!data.objects});
+                            } catch(e) {
+                                info.push({error: e.message});
+                            }
+                        }
+                        return JSON.stringify(info);
+                    }
+                ''')
+                logger.info(f"[flatfox] JSON-Scripts Debug: {json_debug}")
+
                 self._json_data = page_obj.evaluate('''
                     () => {
                         const scripts = document.querySelectorAll('script[type="application/json"]');
@@ -145,7 +164,12 @@ class FlatfoxScraper(BaseScraper):
                         return null;
                     }
                 ''')
-            except Exception:
+                if self._json_data:
+                    logger.info(f"[flatfox] JSON-Daten gefunden ({len(self._json_data)} bytes)")
+                else:
+                    logger.warning("[flatfox] Keine JSON-Daten mit 'results' oder 'objects' gefunden")
+            except Exception as e:
+                logger.warning(f"[flatfox] JSON-Extraktion Fehler: {e}")
                 self._json_data = None
 
             context.close()
