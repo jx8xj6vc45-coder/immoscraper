@@ -26,33 +26,69 @@ class HomegateScraper(BaseScraper):
     def get_name(self) -> str:
         return 'homegate'
 
-    def build_search_url(self, page: int = 1) -> str:
+    def build_search_url(self, page: int = 1, room_param: str = 'ac') -> str:
+        """Baut die Such-URL.
+
+        Args:
+            page: Seitennummer
+            room_param: 'ac' oder 'nrf' - welcher Parameter für Zimmerfilter
+        """
         min_rooms = self.criteria.get('min_rooms', 4.5)
         min_rooms_int = int(min_rooms)
 
         url = (
             f"{self.BASE_URL}/buy/real-estate/canton-zurich/matching-list"
-            f"?ac={min_rooms_int}"
+            f"?{room_param}={min_rooms_int}"
         )
         if page > 1:
             url += f"&ep={page}"
 
-        # Debug: Log der verwendeten URL
-        logger.info(f"[homegate] URL: {url} (min_rooms_criteria={min_rooms}, ac_param={min_rooms_int})")
-        logger.info(f"[homegate] ACHTUNG: ac={min_rooms_int} scheint ignoriert zu werden! "
-                   f"Bitte manuell verifizieren: Öffne die URL im Browser und prüfe ob Zimmerfilter funktioniert")
         return url
 
     def search(self) -> List[Listing]:
-        """Überschreibt die Basis-Suche um mehrere Seiten zu laden."""
+        """Überschreibt die Basis-Suche um mehrere Seiten zu laden.
+
+        Testet beide Zimmer-Parameter (ac und nrf) und verwendet den besseren.
+        """
+        # TEST: Vergleiche beide Parameter
+        min_rooms = self.criteria.get('min_rooms', 4.5)
+
+        # Test mit 'ac' Parameter
+        logger.info(f"[homegate] TEST: Vergleiche 'ac' vs 'nrf' Parameter für Zimmerfilter")
+
+        ac_url = self.build_search_url(page=1, room_param='ac')
+        logger.info(f"[homegate] Test URL mit ac: {ac_url}")
+        ac_listings = self._search_page(1, room_param='ac')
+        ac_with_rooms = [l for l in ac_listings if l.rooms and l.rooms >= min_rooms]
+        logger.info(f"[homegate] ac={int(min_rooms)}: {len(ac_listings)} total, {len(ac_with_rooms)} mit >= {min_rooms} Zimmer")
+
+        # Test mit 'nrf' Parameter
+        nrf_url = self.build_search_url(page=1, room_param='nrf')
+        logger.info(f"[homegate] Test URL mit nrf: {nrf_url}")
+        nrf_listings = self._search_page(1, room_param='nrf')
+        nrf_with_rooms = [l for l in nrf_listings if l.rooms and l.rooms >= min_rooms]
+        logger.info(f"[homegate] nrf={int(min_rooms)}: {len(nrf_listings)} total, {len(nrf_with_rooms)} mit >= {min_rooms} Zimmer")
+
+        # Entscheide welcher Parameter besser ist
+        if len(nrf_with_rooms) > len(ac_with_rooms):
+            best_param = 'nrf'
+            logger.info(f"[homegate] ERGEBNIS: 'nrf' ist besser ({len(nrf_with_rooms)} vs {len(ac_with_rooms)} passende Listings)")
+        elif len(ac_with_rooms) > len(nrf_with_rooms):
+            best_param = 'ac'
+            logger.info(f"[homegate] ERGEBNIS: 'ac' ist besser ({len(ac_with_rooms)} vs {len(nrf_with_rooms)} passende Listings)")
+        else:
+            best_param = 'ac'  # Default
+            logger.info(f"[homegate] ERGEBNIS: Beide gleich ({len(ac_with_rooms)} passende Listings), verwende 'ac'")
+
+        # Jetzt normale Suche mit bestem Parameter
         all_listings = []
         seen_ids = set()
 
         for page in range(1, self.MAX_PAGES + 1):
-            logger.info(f"[homegate] Lade Seite {page}...")
+            logger.info(f"[homegate] Lade Seite {page} (param={best_param})...")
 
             # Führe die Basis-Suche für diese Seite aus
-            page_listings = self._search_page(page)
+            page_listings = self._search_page(page, room_param=best_param)
 
             if not page_listings:
                 logger.info(f"[homegate] Seite {page}: keine weiteren Listings")
@@ -78,13 +114,13 @@ class HomegateScraper(BaseScraper):
         logger.info(f"[homegate] Total: {len(all_listings)} Listings von {page} Seiten")
         return all_listings
 
-    def _search_page(self, page: int) -> List[Listing]:
+    def _search_page(self, page: int, room_param: str = 'ac') -> List[Listing]:
         """Lädt eine einzelne Seite und gibt die Listings zurück."""
         pw = None
         browser = None
         context = None
         try:
-            url = self.build_search_url(page)
+            url = self.build_search_url(page, room_param=room_param)
             logger.debug(f"[homegate] Fetching {url}")
 
             from playwright.sync_api import sync_playwright
